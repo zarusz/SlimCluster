@@ -6,8 +6,9 @@ Additionaly, it implements a dynamic cluster memberlist (where nodes come online
 * Memberlist is required to maintain what instances constitute a cluster.
 * Raft consensus helps propagata state across the micro-service instances and ensure there is a leader instance performing the coordination of work.
 
-The library goal is to provide a common groundwork for coordination of your distributed micro-service instances allows the developer focus on the business problem at hand.
-It promisses to have a friendly API and pluggable architecture.
+The library goal is to provide a common groundwork for coordination and consensus of your distributed micro-service instances. 
+With that the developer can focus on the business problem at hand rather rather than havng to solve distributed problems.
+The library promisses to have a friendly API and pluggable architecture.
 
 The strategic aim for SlimCluster is to implement other algorithms to make distributed .NET micro-services easier and not require one to pull in a load of other 3rd party libraries or products.
 
