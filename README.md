@@ -1,7 +1,13 @@
 # SlimCluster
 
 SlimCluster has the Raft distributed consensus algorithm implemented in .NET.
-The library goal is to provide a common groundwork for coordination of your distributed micro-services using Raft protocol. It promisses to have a developer friendly API and pluggable architecture.
+Additionaly, it implements a dynamic cluster memberlist (where nodes come online and go offline/die) with few discovery options.
+
+* Memberlist is required to maintain what instances constitute a cluster.
+* Raft consensus helps propagata state across the micro-service instances and ensure there is a leader instance performing the coordination of work.
+
+The library goal is to provide a common groundwork for coordination of your distributed micro-service instances allows the developer focus on the business problem at hand.
+It promisses to have a friendly API and pluggable architecture.
 
 The strategic aim for SlimCluster is to implement other algorithms to make distributed .NET micro-services easier and not require one to pull in a load of other 3rd party libraries or products.
 
@@ -19,9 +25,14 @@ The strategic aim for SlimCluster is to implement other algorithms to make distr
 
 ## Packages
 
-| Name                                            | Descripton                                                                                                          | NuGet                                                                                                                                                                      |
-|-------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `SlimCluster.Strategy.Raft`                     | The Raft algorithm implementation                                                                                   | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft)                                         |
+| Name                                        | Descripton                                                                                                          | NuGet                                                                                                                                                                      |
+|---------------------------------------------|---------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `SlimCluster.Strategy.Raft`                 | The Raft algorithm implementation                                                                                   | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft)                                         |
+| `SlimCluster.Strategy.Raft.Transport.Redis` | Raft RPC implemented with Redis Pub/Sub                                                                                    | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft)                                         |
+| `SlimCluster.Strategy.Raft.Transport.Tcp`   | Raft RPC implemented with TCP                                                                                   | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft)                                         |
+| `SlimCluster.Membership`                    | The membership core                                                                                               | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft)                                         |
+| `SlimCluster.Membership.Redis`              | The membership implementation based on Redis Pub/Sub                                                                | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft)                                         |
+| `SlimCluster.Membership.UdpMulticast`       | The membership implementation based on UDP Multicast                                                                 | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft)                                         |
 
 
 ## Samples
