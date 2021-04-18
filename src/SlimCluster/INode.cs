@@ -11,5 +11,7 @@
         /// Status of the node as visible to from the cluster.
         /// </summary>
         INodeStatus Status { get; }
+
+
     }
 }

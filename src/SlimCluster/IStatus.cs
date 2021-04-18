@@ -7,4 +7,8 @@ namespace SlimCluster
         Guid Id { get; }
         string Name { get; }
     }
+
+    public interface IAddress
+    {
+    }
 }

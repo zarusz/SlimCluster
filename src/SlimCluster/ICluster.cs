@@ -12,12 +12,12 @@ namespace SlimCluster
         /// <summary>
         /// Nodes participating in the cluster (changing dynamically).
         /// </summary>
-        IReadOnlyCollection<INode> Nodes { get; }
+        IReadOnlyCollection<INode> Members { get; }
 
         /// <summary>
         /// Current elected leader or null if no leader elected yet.
         /// </summary>
-        INode LeaderNode { get; }
+        INode? LeaderNode { get; }
 
         IClusterStatus Status { get; }
     }
