@@ -1,9 +1,9 @@
 # SlimCluster
 
 SlimCluster has the Raft distributed consensus algorithm implemented in .NET.
-The library goal is to provide a common groundwork for coordination of your distributed micro-services using Raft protocol using an developer friendly API and pluggable architecture.
+The library goal is to provide a common groundwork for coordination of your distributed micro-services using Raft protocol. It promisses to have a developer friendly API and pluggable architecture.
 
-The strategic aim for SlimCluster, is to implement other algorithms to make distributed .NET micro-services easier and not require pulling in a load of other 3rd party libraries or heavy products.
+The strategic aim for SlimCluster is to implement other algorithms to make distributed .NET micro-services easier and not require one to pull in a load of other 3rd party libraries or products.
 
 > This is work in progress! 
 
