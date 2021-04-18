@@ -1,7 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.Threading.Tasks;
 
-namespace SlimCluster.Strategy.Raft.StateMachine
+namespace SlimCluster.Strategy.Raft
 {
     public interface IStateMachine
     {

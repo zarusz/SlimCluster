@@ -1,9 +1,12 @@
-﻿using System.Collections.Generic;
+﻿using SlimCluster.Membership;
+using System.Collections.Generic;
 
 namespace SlimCluster.Strategy.Raft
 {
     public class RaftNode
     {
+        private readonly IClusterMembership clusterMembership;
+
         #region persistent state
 
         public int CurrentTerm { get; protected set; }
@@ -23,8 +26,10 @@ namespace SlimCluster.Strategy.Raft
         public RaftLeaderState? LeaderState { get; protected set; }
         public RaftCandidateState? CandidateState { get; protected set; }
 
-        public RaftNode()
+        public RaftNode(IClusterMembership clusterMembership)
         {
+            this.clusterMembership = clusterMembership;
+            
             CurrentTerm = 0;
             VotedFor = null;
             Log = new List<LogEntry>();

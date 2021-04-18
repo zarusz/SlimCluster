@@ -20,5 +20,7 @@ namespace SlimCluster
         INode? LeaderNode { get; }
 
         IClusterStatus Status { get; }
+
+        // OnMemberAnnunced
     }
 }
