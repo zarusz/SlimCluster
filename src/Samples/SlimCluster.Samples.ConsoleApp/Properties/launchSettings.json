@@ -1,0 +1,7 @@
+{
+  "profiles": {
+    "SlimCluster.Samples.ConsoleApp": {
+      "commandName": "Project"
+    }
+  }
+}

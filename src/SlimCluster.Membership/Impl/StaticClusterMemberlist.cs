@@ -3,6 +3,7 @@
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using System.Threading.Tasks;
 
     /// <summary>
     /// Represents a static list of nodes that is preconfigured up-front and static (does not change over time).
@@ -15,6 +16,7 @@
 
         public event IClusterMembership.MemberJoinedEventHandler? MemberJoined;
         public event IClusterMembership.MemberLeftEventHandler? MemberLeft;
+        public event IClusterMembership.MemberStatusChangedEventHandler? MemberStatusChanged;
 
         public StaticClusterMemberlist(string clusterId, IEnumerable<INode> nodes)
         {
@@ -25,8 +27,12 @@
         public void OnKeepAlive(INode node)
         {
             foreach (var member in Members.Where(x => x.Node == node)) {
-                ((Member)member).LastSeen = DateTime.UtcNow;
+                //((Member)member).LastSeen = DateTimeOffset.Now;
             }
         }
+
+        public Task Start() => Task.CompletedTask;
+
+        public Task Stop() => Task.CompletedTask;
     }
 }

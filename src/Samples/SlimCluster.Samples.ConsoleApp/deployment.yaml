@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sc-consoleapp
+  labels:
+    app: scca
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: scca
+  template:
+    metadata:
+      labels:
+        app: scca
+    spec:
+      containers:
+      - name: consoleapp
+        image: zarusz/sc-consoleapp:latest
+        imagePullPolicy: IfNotPresent # ensure we get always the fresh container image build
+        ports:
+        - containerPort: 60001

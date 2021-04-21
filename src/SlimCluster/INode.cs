@@ -10,7 +10,7 @@
         /// <summary>
         /// The address at which the node is reachable.
         /// </summary>
-        IAddress Address { get; set; }
+        IAddress Address { get; }
 
         /// <summary>
         /// Status of the node as visible to from the cluster.

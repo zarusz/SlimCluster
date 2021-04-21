@@ -10,6 +10,5 @@ namespace SlimCluster.MsDependencyInjection
 
             return services;
         }
-
     }
 }

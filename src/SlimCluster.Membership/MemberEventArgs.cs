@@ -6,9 +6,9 @@
     {
         public INode Node { get; }
 
-        public DateTime Timestamp { get; }
-        
-        public MemberEventArgs(INode node, DateTime timestamp)
+        public DateTimeOffset Timestamp { get; }
+
+        public MemberEventArgs(INode node, DateTimeOffset timestamp)
         {
             Node = node;
             Timestamp = timestamp;
