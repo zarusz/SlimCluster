@@ -16,10 +16,10 @@
 
         void OnKeepAlive(INode node);
 
-        event MemberJoindedEventHandler? MemberJoined;
-        event MemberDepartedEventHandler? MemberDeparted;
+        event MemberJoinedEventHandler? MemberJoined;
+        event MemberLeftEventHandler? MemberLeft;
 
-        public delegate void MemberJoindedEventHandler(object sender, MemberEventArgs e);
-        public delegate void MemberDepartedEventHandler(object sender, MemberEventArgs e);
+        public delegate void MemberJoinedEventHandler(object sender, MemberEventArgs e);
+        public delegate void MemberLeftEventHandler(object sender, MemberEventArgs e);
     }
 }

@@ -5,11 +5,11 @@ VisualStudioVersion = 16.0.31005.135
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster", "SlimCluster\SlimCluster.csproj", "{77A1D853-5C45-4DAD-B2F0-0B4F6BB55B2F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimCluster.MsDependencyInjection", "SlimCluster.MsDependencyInjection\SlimCluster.MsDependencyInjection.csproj", "{50B8ED81-C172-4302-B327-AF741B05B9F4}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.MsDependencyInjection", "SlimCluster.MsDependencyInjection\SlimCluster.MsDependencyInjection.csproj", "{50B8ED81-C172-4302-B327-AF741B05B9F4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimCluster.Strategy.Raft", "SlimCluster.Strategy.Raft\SlimCluster.Strategy.Raft.csproj", "{7199B34A-3DAD-43EC-990A-9F5C89FA6F0A}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.Strategy.Raft", "SlimCluster.Strategy.Raft\SlimCluster.Strategy.Raft.csproj", "{7199B34A-3DAD-43EC-990A-9F5C89FA6F0A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimCluster.Transport", "SlimCluster.Transport\SlimCluster.Transport.csproj", "{05F67E48-1F66-48F0-A876-4A6C55C669BC}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.Transport", "SlimCluster.Transport\SlimCluster.Transport.csproj", "{05F67E48-1F66-48F0-A876-4A6C55C669BC}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{525A6FC4-A561-4A56-8830-B5EB9A132EB4}"
 	ProjectSection(SolutionItems) = preProject
@@ -19,13 +19,13 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Samples", "Samples", "{42420C23-31F6-46F4-AFEA-A12206C47366}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimCluster.Samples.ConsoleApp", "Samples\SlimCluster.Samples.ConsoleApp\SlimCluster.Samples.ConsoleApp.csproj", "{AC8D5966-70AC-44A6-BB8C-4946B2D5EA9F}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.Samples.ConsoleApp", "Samples\SlimCluster.Samples.ConsoleApp\SlimCluster.Samples.ConsoleApp.csproj", "{AC8D5966-70AC-44A6-BB8C-4946B2D5EA9F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimCluster.Membership", "SlimCluster.Membership\SlimCluster.Membership.csproj", "{0A5F274C-688C-4FED-8FC2-6242DD35F5C8}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.Membership", "SlimCluster.Membership\SlimCluster.Membership.csproj", "{0A5F274C-688C-4FED-8FC2-6242DD35F5C8}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimCluster.Membership.UdpMulticast", "SlimCluster.Membership.UdpMulticast\SlimCluster.Membership.UdpMulticast.csproj", "{9FD2809C-6DC8-4403-8CBA-1DAEDC74B628}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.Membership.Redis", "SlimCluster.Membership.Redis\SlimCluster.Membership.Redis.csproj", "{71256028-489E-4EAC-A1D0-0670C0523695}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimCluster.Membership.Redis", "SlimCluster.Membership.Redis\SlimCluster.Membership.Redis.csproj", "{71256028-489E-4EAC-A1D0-0670C0523695}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimCluster.Membership.Swim", "SlimCluster.Membership.Swim\SlimCluster.Membership.Swim.csproj", "{2CAB6CF6-7385-4273-824C-18AB6B2C6914}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -57,14 +57,14 @@ Global
 		{0A5F274C-688C-4FED-8FC2-6242DD35F5C8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0A5F274C-688C-4FED-8FC2-6242DD35F5C8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0A5F274C-688C-4FED-8FC2-6242DD35F5C8}.Release|Any CPU.Build.0 = Release|Any CPU
-		{9FD2809C-6DC8-4403-8CBA-1DAEDC74B628}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{9FD2809C-6DC8-4403-8CBA-1DAEDC74B628}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{9FD2809C-6DC8-4403-8CBA-1DAEDC74B628}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{9FD2809C-6DC8-4403-8CBA-1DAEDC74B628}.Release|Any CPU.Build.0 = Release|Any CPU
 		{71256028-489E-4EAC-A1D0-0670C0523695}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{71256028-489E-4EAC-A1D0-0670C0523695}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{71256028-489E-4EAC-A1D0-0670C0523695}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{71256028-489E-4EAC-A1D0-0670C0523695}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2CAB6CF6-7385-4273-824C-18AB6B2C6914}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2CAB6CF6-7385-4273-824C-18AB6B2C6914}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2CAB6CF6-7385-4273-824C-18AB6B2C6914}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2CAB6CF6-7385-4273-824C-18AB6B2C6914}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

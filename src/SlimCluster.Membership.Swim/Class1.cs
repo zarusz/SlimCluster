@@ -1,4 +1,4 @@
-﻿namespace SlimCluster.Membership.UdpMulticast
+﻿namespace SlimCluster.Membership.Swim
 {
     using System;
 

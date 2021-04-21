@@ -13,8 +13,8 @@
 
         public IReadOnlyCollection<IMember> Members { get; protected set; }
 
-        public event IClusterMembership.MemberJoindedEventHandler? MemberJoined;
-        public event IClusterMembership.MemberDepartedEventHandler? MemberDeparted;
+        public event IClusterMembership.MemberJoinedEventHandler? MemberJoined;
+        public event IClusterMembership.MemberLeftEventHandler? MemberLeft;
 
         public StaticClusterMemberlist(string clusterId, IEnumerable<INode> nodes)
         {
