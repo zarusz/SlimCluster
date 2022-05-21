@@ -12,6 +12,26 @@
     using System.Threading;
     using System.Threading.Tasks;
 
+    public class IndirectPingRequest : IHasPeriodSequenceNumber
+    {
+        public long PeriodSequenceNumber { get; set; }
+        public IPEndPoint RequestingEndpoint { get; private set; }
+        public IPEndPoint TargetEndpoint { get; private set; }
+        /// <summary>
+        /// Time after which the request is no longer needed
+        /// </summary>
+        public DateTimeOffset ExpiresAt { get; private set; }
+
+        public IndirectPingRequest(long periodSequenceNumber, IPEndPoint requestingEndpoint, IPEndPoint targetEndpoint, DateTimeOffset expiresAt)
+        {
+            PeriodSequenceNumber = periodSequenceNumber;
+            RequestingEndpoint = requestingEndpoint;
+            TargetEndpoint = targetEndpoint;
+            ExpiresAt = expiresAt;
+        }
+    }
+
+
     /// <summary>
     /// The SWIM algorithm implementation of <see cref="IClusterMembership"/> for maintaining membership.
     /// </summary>
@@ -21,6 +41,7 @@
         private readonly ILogger<SwimClusterMembership> logger;
         private readonly SwimClusterMembershipOptions options;
         private readonly ISerializer serializer;
+        private readonly ITime time;
 
         /// <summary>
         /// Other known members
@@ -31,6 +52,11 @@
         /// Member representing current node.
         /// </summary>
         private readonly SwimMemberSelf memberSelf;
+
+        /// <summary>
+        /// List of indirect ping requests that this node has been asked for handling.
+        /// </summary>
+        private readonly SnapshottedReadOnlyList<IndirectPingRequest> indirectPingRequests;
 
         public string ClusterId => options.ClusterId;
 
@@ -45,13 +71,15 @@
         /// </summary>
         private SwimProtocolPeriodLoop? protocolPeriod;
 
-        public SwimClusterMembership(ILoggerFactory loggerFactory, IOptions<SwimClusterMembershipOptions> options, ISerializer serializer)
+        public SwimClusterMembership(ILoggerFactory loggerFactory, IOptions<SwimClusterMembershipOptions> options, ISerializer serializer, ITime time)
         {
             this.loggerFactory = loggerFactory;
             this.logger = loggerFactory.CreateLogger<SwimClusterMembership>();
             this.serializer = serializer;
+            this.time = time;
             this.options = options.Value;
             this.otherMembers = new SnapshottedReadOnlyList<SwimMember>();
+            this.indirectPingRequests = new SnapshottedReadOnlyList<IndirectPingRequest>();
 
             this.multicastGroupAddress = IPAddress.Parse(this.options.MulticastGroupAddress);
 
@@ -93,7 +121,7 @@
                 // Run the message processing loop
                 recieveLoopTask = Task.Factory.StartNew(() => RecieveLoop(), TaskCreationOptions.LongRunning);
 
-                protocolPeriod = new SwimProtocolPeriodLoop(loggerFactory.CreateLogger<SwimProtocolPeriodLoop>(), options, this, otherMembers);
+                protocolPeriod = new SwimProtocolPeriodLoop(loggerFactory.CreateLogger<SwimProtocolPeriodLoop>(), options, this, otherMembers, time);
 
                 isStarted = true;
 
@@ -128,6 +156,8 @@
                     }
                     recieveLoopTask = null;
                 }
+
+                await NotifyLeft();
 
                 // Stop multicast group
                 lock (udpClientLock)
@@ -169,19 +199,18 @@
             MemberStatusChanged?.Invoke(this, new MemberEventArgs(member, DateTimeOffset.Now));
         }
 
-        protected Task NotifyJoined()
-        {
+        protected Task NotifyJoined() =>
             // Announce (multicast) to others that this node joined the network
+            SendToMulticastGroup(new NodeMessage { NodeJoined = new NodeJoinedMessage(memberSelf.Id, memberSelf.Incarnation) }, nameof(NodeJoinedMessage));
 
-            var message = new NodeMessage
-            {
-                NodeJoined = new NodeJoinedMessage(memberSelf.Id, memberSelf.Incarnation)
-            };
+        protected Task NotifyLeft() =>
+            // Announce (multicast) to others that this node left the network
+            SendToMulticastGroup(new NodeMessage { NodeLeft = new NodeLeftMessage(memberSelf.Id, memberSelf.Incarnation) }, nameof(NodeLeftMessage));
 
+        private Task SendToMulticastGroup(NodeMessage message, string messageType)
+        {
             var endPoint = new IPEndPoint(multicastGroupAddress, options.Port);
-
-            logger.LogInformation("Sending Joined message for node {NodeId} (incarnation {NodeIncarnation}) on the multicast group {MulticastEndPoint}", message.NodeJoined.NodeId, message.NodeJoined.Incarnation, endPoint);
-
+            logger.LogInformation("Sending {MessageType} for node {NodeId} (incarnation {NodeIncarnation}) on the multicast group {MulticastEndPoint}", messageType, memberSelf.Id, memberSelf.Incarnation, endPoint);
             return SendMessage(message, endPoint);
         }
 
@@ -227,6 +256,10 @@
             {
                 await OnNodeJoined(msg.NodeJoined, remoteEndPoint);
             }
+            if (msg.NodeLeft != null)
+            {
+                await OnNodeLeft(msg.NodeLeft, remoteEndPoint);
+            }
 
             if (msg.Ping != null)
             {
@@ -246,11 +279,11 @@
 
         protected Task OnNodeJoined(NodeJoinedMessage m, IPEndPoint endPoint)
         {
-            logger.LogInformation("Node {NodeId} (incarnation {NodeIncarnation}) joined at {NodeEndPoint}", m.NodeId, m.Incarnation, endPoint);
-
             // Add other members only
             if (m.NodeId != memberSelf.Id)
             {
+                logger.LogInformation("Node {NodeId} (incarnation {NodeIncarnation}) joined at {NodeEndPoint}", m.NodeId, m.Incarnation, endPoint);
+
                 var member = new SwimMember(m.NodeId, new IPEndPointAddress(endPoint), DateTime.UtcNow, m.Incarnation, SwimMemberStatus.Active, NotifyStatusChanged);
                 otherMembers.Mutate(list => list.Add(member));
 
@@ -263,54 +296,113 @@
                     logger.LogWarning(e, "Exception while invoking event {HandlerName}", nameof(MemberJoined));
                 }
             }
-
             return Task.CompletedTask;
         }
 
-        protected Task OnPing(PingMessage m, IPEndPoint endPoint)
+        protected Task OnNodeLeft(NodeLeftMessage m, IPEndPoint endPoint)
         {
-            var responseMessage = new NodeMessage
+            // Add other members only
+            if (m.NodeId != memberSelf.Id)
+            {
+                logger.LogInformation("Node {NodeId} (incarnation {NodeIncarnation}) left at {NodeEndPoint}", m.NodeId, m.Incarnation, endPoint);
+
+                var member = otherMembers.SingleOrDefault(x => x.Node.Id == m.NodeId);
+                if (member != null)
+                {
+                    otherMembers.Mutate(list => list.Remove(member));
+
+                    try
+                    {
+                        MemberLeft?.Invoke(this, new MemberEventArgs(member.Node, member.LastSeen));
+                    }
+                    catch (Exception e)
+                    {
+                        logger.LogWarning(e, "Exception while invoking event {HandlerName}", nameof(MemberLeft));
+                    }
+                }
+            }
+            return Task.CompletedTask;
+        }
+
+        protected Task OnPing(PingMessage m, IPEndPoint senderEndPoint)
+            => SendAck(m, senderEndPoint);
+
+        private Task SendAck(IHasPeriodSequenceNumber m, IPEndPoint senderEndPoint, string? nodeId = null)
+        {
+            var message = new NodeMessage
             {
                 Ack = new AckMessage
                 {
-                    NodeId = memberSelf.Id,
+                    NodeId = nodeId ?? memberSelf.Id,
                     PeriodSequenceNumber = m.PeriodSequenceNumber,
                 }
             };
 
-            logger.LogDebug("Sending Ack with node {NodeId}, period sequence number {PeriodSequenceNumber} to remote {NodeEndPoint}", responseMessage.Ack.NodeId, responseMessage.Ack.PeriodSequenceNumber, endPoint);
+            logger.LogDebug("Sending Ack with node {NodeId}, period sequence number {PeriodSequenceNumber} to remote {NodeEndPoint}", message.Ack.NodeId, message.Ack.PeriodSequenceNumber, senderEndPoint);
 
-            return SendMessage(responseMessage, endPoint);
+            return SendMessage(message, senderEndPoint);
         }
 
-        protected Task OnPingReq(PingReqMessage m, IPEndPoint endPoint)
+        protected Task OnPingReq(PingReqMessage m, IPEndPoint senderEndPoint)
         {
-            return Task.CompletedTask;
+            var targetNodeEndpoint = new IPEndPoint(IPAddress.Parse(m.TargetNodeAddress), m.TargetNodePort);
+
+            // Record PingReq in local list with expiration
+            var indirectPingRequest = new IndirectPingRequest(
+                periodSequenceNumber: m.PeriodSequenceNumber,
+                targetEndpoint: targetNodeEndpoint,
+                requestingEndpoint: senderEndPoint,
+                expiresAt: time.Now.Add(options.ProtocolPeriod.Multiply(3))); // Waiting 3 protocol period cycles should be more than enough
+
+            indirectPingRequests.Mutate(list =>
+            {
+                // Recycle expired entries
+                var now = time.Now;
+                list.RemoveAll(x => x.ExpiresAt > now);
+
+                // Add the current request
+                list.Add(indirectPingRequest);
+            });
+
+            var message = new NodeMessage
+            {
+                Ping = new PingMessage
+                {
+                    PeriodSequenceNumber = m.PeriodSequenceNumber
+                }
+            };
+
+            logger.LogDebug("Sending indirect Ping with period sequence number {PeriodSequenceNumber} to remote {NodeEndPoint}", m.PeriodSequenceNumber, targetNodeEndpoint);
+
+            return SendMessage(message, targetNodeEndpoint);
         }
 
-        protected Task OnPingAck(AckMessage m, IPEndPoint endPoint)
+        protected async Task OnPingAck(AckMessage m, IPEndPoint senderEndPoint)
         {
             if (protocolPeriod == null)
             {
                 // This is stopping (disposing).
-                return Task.CompletedTask;
+                return;
             }
 
-            if (protocolPeriod.PeriodSequenceNumber != m.PeriodSequenceNumber)
+            // Handle acks for PingReq (if any)
+            var matchedIndirectPingRequests = indirectPingRequests.Where(x => x.TargetEndpoint == senderEndPoint && x.PeriodSequenceNumber == m.PeriodSequenceNumber).ToList();
+            if (matchedIndirectPingRequests.Count > 0)
             {
-                logger.LogDebug("Ack arrived too late for the node {NodeId}, period {PeriodSequenceNumber}, while the Ack message was for period {AckPeriodSequenceNumber}", m.NodeId, protocolPeriod.PeriodSequenceNumber, m.PeriodSequenceNumber);
-                return Task.CompletedTask;
+                indirectPingRequests.Mutate(list =>
+                {
+                    foreach (var pr in matchedIndirectPingRequests)
+                    {
+                        list.Remove(pr);
+                    }
+                });
+
+                // Send Acks to those nodes who requested PingReq before
+                await Task.WhenAll(matchedIndirectPingRequests.Select(pr => SendAck(m, pr.RequestingEndpoint, nodeId: m.NodeId)));
             }
 
-            var node = otherMembers.SingleOrDefault(x => x.Id == m.NodeId);
-            if (node != null)
-            {
-                node.OnActive();
-
-                logger.LogDebug("Ack arrived for the node {NodeId}, period {PeriodSequenceNumber}, node status {NodeStatus}", m.NodeId, protocolPeriod.PeriodSequenceNumber, node.Status);
-            }
-
-            return Task.CompletedTask;
+            // Let the protocol period know that an Ack arrived
+            await protocolPeriod.OnPingAck(m, senderEndPoint);
         }
     }
 }

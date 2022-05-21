@@ -12,7 +12,9 @@
             services.Configure(options);
             services.AddSingleton<SwimClusterMembership>();
 
-            services.AddTransient<ISerializer>(svp => new JsonMessageSerializer(Encoding.ASCII));
+            services.AddSingleton<ITime, Time>();
+            services.AddSingleton<ISerializer>(svp => new JsonMessageSerializer(Encoding.ASCII));
+
             services.AddSingleton<IClusterMembership>(svp => svp.GetRequiredService<SwimClusterMembership>());
 
             return services;

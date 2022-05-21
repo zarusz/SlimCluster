@@ -1,7 +1,7 @@
-﻿using System;
-
-namespace SlimCluster
+﻿namespace SlimCluster
 {
+    using System;
+
     public interface IStatus
     {
         Guid Id { get; }

@@ -39,13 +39,13 @@
 
         public override string ToString() => $"{Id}/({Address})";
 
-        public void OnActive()
+        public void OnActive(ITime time)
         {
             if (Status == SwimMemberStatus.Confirming || Status == SwimMemberStatus.Suspicious)
             {
                 SuspiciousTimeout = null;
 
-                LastSeen = DateTimeOffset.Now;
+                LastSeen = time.Now;
                 Status = SwimMemberStatus.Active;
                 notifyStatusChanged(this);
             }

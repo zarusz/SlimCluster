@@ -58,7 +58,7 @@
             {
                 if (e.Node.Status == SwimMemberStatus.Suspicious)
                 {
-                    Console.WriteLine("The node {0} is suspicious. All actie members are: {1}", e.Node.Id, string.Join(", ", clusterMembership.Members.Where(x => x.Node.Status == SwimMemberStatus.Active)));
+                    Console.WriteLine("The node {0} is suspicious. All active members are: {1}", e.Node.Id, string.Join(", ", clusterMembership.Members.Where(x => x.Node.Status == SwimMemberStatus.Active)));
                 }
             };
 

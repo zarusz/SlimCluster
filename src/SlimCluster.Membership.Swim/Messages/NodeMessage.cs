@@ -8,6 +8,9 @@
         [JsonProperty("nj")]
         public NodeJoinedMessage? NodeJoined { get; set; }
 
+        [JsonProperty("nl")]
+        public NodeLeftMessage? NodeLeft { get; set; }
+
         [JsonProperty("p")]
         public PingMessage? Ping { get; set; }
 
