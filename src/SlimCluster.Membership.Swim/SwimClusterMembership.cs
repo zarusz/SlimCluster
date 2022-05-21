@@ -302,6 +302,7 @@
                     logger.LogWarning(e, "Exception while invoking event {HandlerName}", nameof(MemberJoined));
                 }
 
+                // ToDo: Perhaps toss coin if this should be provided to avoid every node sending the same memberlist data?
                 // Send welcome
                 _ = SendWelcome(m, senderEndPoint);
             }
