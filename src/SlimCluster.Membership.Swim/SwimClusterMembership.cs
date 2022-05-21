@@ -196,7 +196,7 @@
 
         protected void NotifyStatusChanged(SwimMember member)
         {
-            MemberStatusChanged?.Invoke(this, new MemberEventArgs(member, DateTimeOffset.Now));
+            MemberStatusChanged?.Invoke(this, new MemberEventArgs(member, time.Now));
         }
 
         protected Task NotifyJoined() =>
@@ -256,6 +256,12 @@
             {
                 await OnNodeJoined(msg.NodeJoined, remoteEndPoint);
             }
+
+            if (msg.NodeWelcome != null)
+            {
+                await OnNodeWelcome(msg.NodeWelcome, remoteEndPoint);
+            }
+
             if (msg.NodeLeft != null)
             {
                 await OnNodeLeft(msg.NodeLeft, remoteEndPoint);
@@ -277,14 +283,14 @@
             }
         }
 
-        protected Task OnNodeJoined(NodeJoinedMessage m, IPEndPoint endPoint)
+        protected Task OnNodeJoined(NodeJoinedMessage m, IPEndPoint senderEndPoint)
         {
             // Add other members only
             if (m.NodeId != memberSelf.Id)
             {
-                logger.LogInformation("Node {NodeId} (incarnation {NodeIncarnation}) joined at {NodeEndPoint}", m.NodeId, m.Incarnation, endPoint);
+                logger.LogInformation("Node {NodeId} (incarnation {NodeIncarnation}) joined at {NodeEndPoint}", m.NodeId, m.Incarnation, senderEndPoint);
 
-                var member = new SwimMember(m.NodeId, new IPEndPointAddress(endPoint), DateTime.UtcNow, m.Incarnation, SwimMemberStatus.Active, NotifyStatusChanged);
+                var member = new SwimMember(m.NodeId, new IPEndPointAddress(senderEndPoint), time.Now, m.Incarnation, SwimMemberStatus.Active, NotifyStatusChanged);
                 otherMembers.Mutate(list => list.Add(member));
 
                 try
@@ -295,7 +301,60 @@
                 {
                     logger.LogWarning(e, "Exception while invoking event {HandlerName}", nameof(MemberJoined));
                 }
+
+                // Send welcome
+                _ = SendWelcome(m, senderEndPoint);
             }
+            return Task.CompletedTask;
+        }
+
+        private Task SendWelcome(NodeJoinedMessage m, IPEndPoint endPoint)
+        {
+            var message = new NodeMessage
+            {
+                NodeWelcome = new NodeWelcomeMessage
+                {
+                    Nodes = Members
+                        .Where(x => x.Node.Id != m.NodeId)
+                        .Select(x => new ActiveNode
+                        {
+                            NodeId = x.Node.Id,
+                            NodeAddress = ((IPEndPointAddress)x.Node.Address).EndPoint.ToString(),
+                            NodePort = ((IPEndPointAddress)x.Node.Address).EndPoint.Port
+                        })
+                        .ToList()
+                }
+            };
+
+            if (message.NodeWelcome.Nodes.Count == 0)
+            {
+                // Nothing to share with the new joiner
+                return Task.CompletedTask;
+            }
+
+            logger.LogDebug("Sending Welcome to {NodeId} on {NodeEndPoint} with {NodeCount} known members", m.NodeId, endPoint, message.NodeWelcome.Nodes.Count);
+
+            return SendMessage(message, endPoint);
+        }
+
+        protected Task OnNodeWelcome(NodeWelcomeMessage m, IPEndPoint endPoint)
+        {
+            logger.LogInformation("Recieved starting list of nodes ({NodeCount}) from {NodeEndPoint}", m.Nodes.Count, endPoint);
+
+            otherMembers.Mutate(list =>
+            {
+                foreach (var node in m.Nodes)
+                {
+                    if (list.All(x => x.Id != node.NodeId))
+                    {
+                        var member = new SwimMember(node.NodeId, new IPEndPointAddress(endPoint), time.Now, -1 /* ToDo: Do we need to pass incarnation? */, SwimMemberStatus.Active, NotifyStatusChanged);
+                        list.Add(member);
+                    }
+                }
+            });
+
+            // ToDo: Invoke an event hook
+
             return Task.CompletedTask;
         }
 
@@ -345,7 +404,7 @@
 
         protected Task OnPingReq(PingReqMessage m, IPEndPoint senderEndPoint)
         {
-            var targetNodeEndpoint = new IPEndPoint(IPAddress.Parse(m.TargetNodeAddress), m.TargetNodePort);
+            var targetNodeEndpoint = new IPEndPoint(IPAddress.Parse(m.NodeAddress), m.NodePort);
 
             // Record PingReq in local list with expiration
             var indirectPingRequest = new IndirectPingRequest(
@@ -385,7 +444,7 @@
                 return;
             }
 
-            // Handle acks for PingReq (if any)
+            // Forward acks for PingReq (if any)
             var matchedIndirectPingRequests = indirectPingRequests.Where(x => x.TargetEndpoint == senderEndPoint && x.PeriodSequenceNumber == m.PeriodSequenceNumber).ToList();
             if (matchedIndirectPingRequests.Count > 0)
             {

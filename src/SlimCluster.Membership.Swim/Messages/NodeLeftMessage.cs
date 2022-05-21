@@ -2,7 +2,7 @@
 {
     using Newtonsoft.Json;
 
-    public class NodeLeftMessage : NodeMessage, IHasNodeId
+    public class NodeLeftMessage : IHasNodeId
     {
         public string NodeId { get; set; } = string.Empty;
 

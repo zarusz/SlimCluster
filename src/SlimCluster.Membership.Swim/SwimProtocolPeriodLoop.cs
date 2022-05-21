@@ -154,8 +154,8 @@
                     PingReq = new PingReqMessage
                     {
                         PeriodSequenceNumber = PeriodSequenceNumber,
-                        TargetNodeAddress = targetNodeAddress,
-                        TargetNodePort = targetNodePort,
+                        NodeAddress = targetNodeAddress,
+                        NodePort = targetNodePort,
                     }
                 };
                 return messageSender.SendMessage(message, member.Address.EndPoint);
