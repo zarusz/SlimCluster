@@ -10,6 +10,8 @@
         private readonly List<T> list = new();
         private IReadOnlyList<T> readOnlyList;
 
+        public event Action<SnapshottedReadOnlyList<T>>? Changed;
+
         public IEnumerator<T> GetEnumerator() => readOnlyList.GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => readOnlyList.GetEnumerator();
         public int Count => readOnlyList.Count;
@@ -24,6 +26,8 @@
                 action(list);
                 readOnlyList = list.AsReadOnly();
             }
+
+            Changed?.Invoke(this);
         }
     }
 }

@@ -4,7 +4,7 @@
 
     public class SwimMember : IMember, INode
     {
-        private readonly Action<SwimMember> notifyStatusChanged;
+        private readonly Action<SwimMember>? notifyStatusChanged;
 
         public string Id { get; }
         public int Incarnation { get; }
@@ -26,7 +26,7 @@
 
         public IPEndPointAddress Address { get; protected set; }
 
-        public SwimMember(string id, IPEndPointAddress address, DateTimeOffset joined, int incarnation, SwimMemberStatus status, Action<SwimMember> notifyStatusChanged)
+        public SwimMember(string id, IPEndPointAddress address, DateTimeOffset joined, int incarnation, SwimMemberStatus status, Action<SwimMember>? notifyStatusChanged)
         {
             Id = id;
             Incarnation = incarnation;
@@ -47,7 +47,7 @@
 
                 LastSeen = time.Now;
                 Status = SwimMemberStatus.Active;
-                notifyStatusChanged(this);
+                notifyStatusChanged?.Invoke(this);
             }
         }
 
@@ -57,7 +57,7 @@
             {
                 SuspiciousTimeout = periodTimeout;
                 Status = SwimMemberStatus.Confirming;
-                notifyStatusChanged(this);
+                notifyStatusChanged?.Invoke(this);
             }
         }
 
@@ -66,7 +66,7 @@
             if (Status == SwimMemberStatus.Confirming)
             {
                 Status = SwimMemberStatus.Suspicious;
-                notifyStatusChanged(this);
+                notifyStatusChanged?.Invoke(this);
             }
         }
     }

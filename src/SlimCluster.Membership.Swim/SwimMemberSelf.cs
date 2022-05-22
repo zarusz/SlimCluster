@@ -1,15 +1,15 @@
 ﻿namespace SlimCluster.Membership.Swim
 {
-    public class SwimMemberSelf
+    public class SwimMemberSelf : SwimMember
     {
-        public string Id { get; }
-        public int Incarnation { get; set; }
-
-        public SwimMemberSelf(string id, int incarnation)
+        public SwimMemberSelf(string id, int incarnation, IPEndPointAddress address, ITime time)
+            : base(id, address, time.Now, incarnation, SwimMemberStatus.Active, notifyStatusChanged: null)
         {
-            Id = id;
-            Incarnation = incarnation;
+        }
+
+        public void UpdateAddress(IPEndPointAddress address)
+        {
+            Address = address;
         }
     }
-
 }

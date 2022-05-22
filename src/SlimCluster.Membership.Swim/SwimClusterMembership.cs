@@ -12,26 +12,6 @@
     using System.Threading;
     using System.Threading.Tasks;
 
-    public class IndirectPingRequest : IHasPeriodSequenceNumber
-    {
-        public long PeriodSequenceNumber { get; set; }
-        public IPEndPoint RequestingEndpoint { get; private set; }
-        public IPEndPoint TargetEndpoint { get; private set; }
-        /// <summary>
-        /// Time after which the request is no longer needed
-        /// </summary>
-        public DateTimeOffset ExpiresAt { get; private set; }
-
-        public IndirectPingRequest(long periodSequenceNumber, IPEndPoint requestingEndpoint, IPEndPoint targetEndpoint, DateTimeOffset expiresAt)
-        {
-            PeriodSequenceNumber = periodSequenceNumber;
-            RequestingEndpoint = requestingEndpoint;
-            TargetEndpoint = targetEndpoint;
-            ExpiresAt = expiresAt;
-        }
-    }
-
-
     /// <summary>
     /// The SWIM algorithm implementation of <see cref="IClusterMembership"/> for maintaining membership.
     /// </summary>
@@ -60,7 +40,7 @@
 
         public string ClusterId => options.ClusterId;
 
-        public IReadOnlyCollection<IMember> Members => otherMembers;
+        public IReadOnlyCollection<IMember> Members => new HashSet<IMember>(otherMembers) { memberSelf };
 
         public event IClusterMembership.MemberJoinedEventHandler? MemberJoined;
         public event IClusterMembership.MemberLeftEventHandler? MemberLeft;
@@ -78,13 +58,13 @@
             this.serializer = serializer;
             this.time = time;
             this.options = options.Value;
-            this.otherMembers = new SnapshottedReadOnlyList<SwimMember>();
+
             this.indirectPingRequests = new SnapshottedReadOnlyList<IndirectPingRequest>();
 
-            this.multicastGroupAddress = IPAddress.Parse(this.options.MulticastGroupAddress);
+            this.otherMembers = new SnapshottedReadOnlyList<SwimMember>();
+            this.memberSelf = new SwimMemberSelf(this.options.NodeId, 0, new IPEndPointAddress(new IPEndPoint(IPAddress.None, 0)), time);
 
-            // This member status
-            this.memberSelf = new SwimMemberSelf(this.options.NodeId, 0);
+            this.multicastGroupAddress = IPAddress.Parse(this.options.MulticastGroupAddress);
         }
 
         private readonly object udpClientLock = new();
@@ -113,8 +93,10 @@
                     // See https://docs.microsoft.com/pl-pl/dotnet/api/system.net.sockets.udpclient.joinmulticastgroup?view=net-5.0
                     udpClient.JoinMulticastGroup(multicastGroupAddress);
 
-                    logger.LogInformation("Node listening on {NodeEndPoint}", udpClient.Client.LocalEndPoint);
                 }
+
+                memberSelf.UpdateAddress(new IPEndPointAddress((IPEndPoint)udpClient.Client.LocalEndPoint));
+                logger.LogInformation("Node listening on {NodeEndPoint}", memberSelf.Address);
 
                 loopCts = new CancellationTokenSource();
 
@@ -302,12 +284,22 @@
                     logger.LogWarning(e, "Exception while invoking event {HandlerName}", nameof(MemberJoined));
                 }
 
-                // ToDo: Perhaps toss coin if this should be provided to avoid every node sending the same memberlist data?
-                // Send welcome
-                _ = SendWelcome(m, senderEndPoint);
+                if (options.WelcomeMessage.IsEnabled)
+                {
+                    // Send welcome
+
+                    // If random, toss a coin - to avoid every node sending the same memberlist data
+                    if (!options.WelcomeMessage.IsRandom || random.Next(1) == 1)
+                    {
+                        // Fire & forget
+                        _ = SendWelcome(m, senderEndPoint);
+                    }
+                }
             }
             return Task.CompletedTask;
         }
+
+        private readonly Random random = new();
 
         private Task SendWelcome(NodeJoinedMessage m, IPEndPoint endPoint)
         {
@@ -346,9 +338,9 @@
             {
                 foreach (var node in m.Nodes)
                 {
-                    if (list.All(x => x.Id != node.NodeId))
+                    if (list.All(x => x.Id != node.NodeId) && node.NodeId != memberSelf.Id)
                     {
-                        var member = new SwimMember(node.NodeId, new IPEndPointAddress(endPoint), time.Now, -1 /* ToDo: Do we need to pass incarnation? */, SwimMemberStatus.Active, NotifyStatusChanged);
+                        var member = new SwimMember(node.NodeId, new IPEndPointAddress(endPoint), time.Now, 0/* ToDo: Do we need to pass incarnation? */, SwimMemberStatus.Active, NotifyStatusChanged);
                         list.Add(member);
                     }
                 }
