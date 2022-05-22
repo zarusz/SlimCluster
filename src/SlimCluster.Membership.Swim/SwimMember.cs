@@ -1,15 +1,20 @@
 ﻿namespace SlimCluster.Membership.Swim
 {
+    using Microsoft.Extensions.Logging;
     using System;
 
     public class SwimMember : IMember, INode
     {
+        private readonly ILogger<SwimMember> logger;
         private readonly Action<SwimMember>? notifyStatusChanged;
 
         public string Id { get; }
         public int Incarnation { get; }
         IAddress INode.Address => Address;
-        public INodeStatus Status { get; protected set; }
+        public INodeStatus Status => SwimStatus;
+
+        public SwimMemberStatus SwimStatus { get; protected set; }
+
         /// <summary>
         /// Point in time after which the Suspicious node will be declared as Confirm if no ACK is recieved.
         /// </summary>
@@ -26,13 +31,15 @@
 
         public IPEndPointAddress Address { get; protected set; }
 
-        public SwimMember(string id, IPEndPointAddress address, DateTimeOffset joined, int incarnation, SwimMemberStatus status, Action<SwimMember>? notifyStatusChanged)
+        public SwimMember(string id, IPEndPointAddress address, DateTimeOffset joined, int incarnation, SwimMemberStatus status, Action<SwimMember>? notifyStatusChanged, ILogger<SwimMember> logger)
         {
+            this.logger = logger;
+            this.notifyStatusChanged = notifyStatusChanged;
+
             Id = id;
             Incarnation = incarnation;
             Address = address;
-            Status = status;
-            this.notifyStatusChanged = notifyStatusChanged;
+            SwimStatus = status;
             Joined = joined;
             LastSeen = joined;
         }
@@ -46,9 +53,17 @@
                 SuspiciousTimeout = null;
 
                 LastSeen = time.Now;
-                Status = SwimMemberStatus.Active;
-                notifyStatusChanged?.Invoke(this);
+                ChangeStatusTo(SwimMemberStatus.Active);
             }
+        }
+
+        private void ChangeStatusTo(SwimMemberStatus newStatus)
+        {
+            // When substantial transistion from active non-active or vice versa log with Info, otherwise Debug
+            var logLevel = newStatus.IsActive != SwimStatus.IsActive ? LogLevel.Information : LogLevel.Debug;
+            logger.Log(logLevel, "Member {NodeId} changes status to {NodeStatus} (previous {PreviousNodeStatus})", Id, newStatus, Status);
+            SwimStatus = newStatus;
+            notifyStatusChanged?.Invoke(this);
         }
 
         public void OnConfirming(DateTimeOffset periodTimeout)
@@ -56,8 +71,8 @@
             if (Status == SwimMemberStatus.Active || Status == SwimMemberStatus.Suspicious)
             {
                 SuspiciousTimeout = periodTimeout;
-                Status = SwimMemberStatus.Confirming;
-                notifyStatusChanged?.Invoke(this);
+
+                ChangeStatusTo(SwimMemberStatus.Confirming);
             }
         }
 
@@ -65,8 +80,7 @@
         {
             if (Status == SwimMemberStatus.Confirming)
             {
-                Status = SwimMemberStatus.Suspicious;
-                notifyStatusChanged?.Invoke(this);
+                ChangeStatusTo(SwimMemberStatus.Suspicious);
             }
         }
     }

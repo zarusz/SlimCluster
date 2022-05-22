@@ -9,9 +9,9 @@
     using System.Threading;
     using System.Threading.Tasks;
 
-    public class SwimProtocolPeriodLoop : IAsyncDisposable
+    public class SwimFailureDetector : IAsyncDisposable
     {
-        private readonly ILogger<SwimProtocolPeriodLoop> logger;
+        private readonly ILogger<SwimFailureDetector> logger;
         private readonly SwimClusterMembershipOptions options;
         private readonly IClusterMessageSender messageSender;
         private readonly IReadOnlyList<SwimMember> otherMembers;
@@ -40,8 +40,8 @@
 
         private bool timerMethodRunning;
 
-        public SwimProtocolPeriodLoop(
-            ILogger<SwimProtocolPeriodLoop> logger,
+        public SwimFailureDetector(
+            ILogger<SwimFailureDetector> logger,
             SwimClusterMembershipOptions options,
             IClusterMessageSender messageSender,
             IReadOnlyList<SwimMember> otherMembers,
@@ -113,7 +113,7 @@
             periodTimeout = now.Add(options.ProtocolPeriod);
             Interlocked.Increment(ref periodSequenceNumber);
 
-            logger.LogDebug("Started period {PeriodSequenceNumber} and timeout on {PeriodTimeout}", PeriodSequenceNumber, periodTimeout);
+            logger.LogDebug("Started period {PeriodSequenceNumber} and timeout on {PeriodTimeout:s}", PeriodSequenceNumber, periodTimeout);
         }
 
         protected IList<SwimMember> ActiveMembers => otherMembers.Where(x => x.Status == SwimMemberStatus.Active).ToList();

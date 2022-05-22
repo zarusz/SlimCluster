@@ -7,10 +7,10 @@
     {
         private ILogger<SwimMemberSelf> logger;
 
-        public SwimMemberSelf(string id, int incarnation, IPEndPointAddress address, ITime time, ILogger<SwimMemberSelf> logger)
-            : base(id, address, time.Now, incarnation, SwimMemberStatus.Active, notifyStatusChanged: null)
+        public SwimMemberSelf(string id, int incarnation, IPEndPointAddress address, ITime time, ILoggerFactory loggerFactory)
+            : base(id, address, time.Now, incarnation, SwimMemberStatus.Active, notifyStatusChanged: null, loggerFactory.CreateLogger<SwimMember>())
         {
-            this.logger = logger;
+            this.logger = loggerFactory.CreateLogger<SwimMemberSelf>();
         }
 
         public bool OnObservedAddress(IPEndPoint endpoint)

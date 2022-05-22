@@ -49,7 +49,7 @@
         /// <summary>
         /// The protocol period loop (failure detection).
         /// </summary>
-        private SwimProtocolPeriodLoop? protocolPeriod;
+        private SwimFailureDetector? protocolPeriod;
 
         public SwimClusterMembership(ILoggerFactory loggerFactory, IOptions<SwimClusterMembershipOptions> options, ISerializer serializer, ITime time)
         {
@@ -62,7 +62,7 @@
             this.indirectPingRequests = new SnapshottedReadOnlyList<IndirectPingRequest>();
 
             this.otherMembers = new SnapshottedReadOnlyList<SwimMember>();
-            this.memberSelf = new SwimMemberSelf(this.options.NodeId, 0, IPEndPointAddress.Unknown, time, loggerFactory.CreateLogger<SwimMemberSelf>());
+            this.memberSelf = new SwimMemberSelf(this.options.NodeId, 0, IPEndPointAddress.Unknown, time, loggerFactory);
 
             this.multicastGroupAddress = IPAddress.Parse(this.options.MulticastGroupAddress);
         }
@@ -101,7 +101,7 @@
                 // Run the message processing loop
                 recieveLoopTask = Task.Factory.StartNew(() => RecieveLoop(), TaskCreationOptions.LongRunning);
 
-                protocolPeriod = new SwimProtocolPeriodLoop(loggerFactory.CreateLogger<SwimProtocolPeriodLoop>(), options, this, otherMembers, time);
+                protocolPeriod = new SwimFailureDetector(loggerFactory.CreateLogger<SwimFailureDetector>(), options, this, otherMembers, time);
 
                 isStarted = true;
 
@@ -264,7 +264,7 @@
         }
 
         protected SwimMember CreateMember(string nodeId, int incarnation, IPEndPoint endPoint) 
-            => new SwimMember(nodeId, new IPEndPointAddress(endPoint), time.Now, incarnation, SwimMemberStatus.Active, NotifyStatusChanged);
+            => new (nodeId, new IPEndPointAddress(endPoint), time.Now, incarnation, SwimMemberStatus.Active, NotifyStatusChanged, loggerFactory.CreateLogger<SwimMember>());
 
         protected Task OnNodeJoined(NodeJoinedMessage m, IPEndPoint senderEndPoint)
         {
@@ -316,6 +316,7 @@
                 {
                     NodeId = memberSelf.Id,
                     Nodes = otherMembers
+                        .Where(x => x.SwimStatus.IsActive) // only active members
                         .Where(x => x.Node.Id != m.NodeId) // exclude the newly joined node
                         .Select(x => new ActiveNode
                         {
