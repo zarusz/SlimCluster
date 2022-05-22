@@ -6,8 +6,10 @@
     /// <summary>
     /// Message sent by other nodes as a response to the node joining the cluster.
     /// </summary>
-    public class NodeWelcomeMessage
+    public class NodeWelcomeMessage : IHasNodeId
     {
+        public string NodeId { get; set; } = string.Empty;
+
         /// <summary>
         /// The list of active nodes that are know to date.
         /// </summary>

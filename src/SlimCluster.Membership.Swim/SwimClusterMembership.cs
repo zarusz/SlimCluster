@@ -62,7 +62,7 @@
             this.indirectPingRequests = new SnapshottedReadOnlyList<IndirectPingRequest>();
 
             this.otherMembers = new SnapshottedReadOnlyList<SwimMember>();
-            this.memberSelf = new SwimMemberSelf(this.options.NodeId, 0, new IPEndPointAddress(new IPEndPoint(IPAddress.None, 0)), time);
+            this.memberSelf = new SwimMemberSelf(this.options.NodeId, 0, IPEndPointAddress.Unknown, time, loggerFactory.CreateLogger<SwimMemberSelf>());
 
             this.multicastGroupAddress = IPAddress.Parse(this.options.MulticastGroupAddress);
         }
@@ -92,11 +92,9 @@
                     udpClient = new UdpClient(options.Port, options.AddressFamily);
                     // See https://docs.microsoft.com/pl-pl/dotnet/api/system.net.sockets.udpclient.joinmulticastgroup?view=net-5.0
                     udpClient.JoinMulticastGroup(multicastGroupAddress);
-
                 }
 
-                memberSelf.UpdateAddress(new IPEndPointAddress((IPEndPoint)udpClient.Client.LocalEndPoint));
-                logger.LogInformation("Node listening on {NodeEndPoint}", memberSelf.Address);
+                logger.LogInformation("Node listening on {NodeEndPoint}", udpClient.Client.LocalEndPoint);
 
                 loopCts = new CancellationTokenSource();
 
@@ -265,6 +263,9 @@
             }
         }
 
+        protected SwimMember CreateMember(string nodeId, int incarnation, IPEndPoint endPoint) 
+            => new SwimMember(nodeId, new IPEndPointAddress(endPoint), time.Now, incarnation, SwimMemberStatus.Active, NotifyStatusChanged);
+
         protected Task OnNodeJoined(NodeJoinedMessage m, IPEndPoint senderEndPoint)
         {
             // Add other members only
@@ -272,7 +273,7 @@
             {
                 logger.LogInformation("Node {NodeId} (incarnation {NodeIncarnation}) joined at {NodeEndPoint}", m.NodeId, m.Incarnation, senderEndPoint);
 
-                var member = new SwimMember(m.NodeId, new IPEndPointAddress(senderEndPoint), time.Now, m.Incarnation, SwimMemberStatus.Active, NotifyStatusChanged);
+                var member = CreateMember(m.NodeId, m.Incarnation, senderEndPoint);
                 otherMembers.Mutate(list => list.Add(member));
 
                 try
@@ -289,13 +290,19 @@
                     // Send welcome
 
                     // If random, toss a coin - to avoid every node sending the same memberlist data
-                    if (!options.WelcomeMessage.IsRandom || random.Next(1) == 1)
+                    if (!options.WelcomeMessage.IsRandom || random.Next(2) == 1)
                     {
                         // Fire & forget
                         _ = SendWelcome(m, senderEndPoint);
                     }
                 }
             }
+            else
+            {
+                // Record the observed external IP address for self
+                memberSelf.OnObservedAddress(senderEndPoint);
+            }
+
             return Task.CompletedTask;
         }
 
@@ -307,42 +314,52 @@
             {
                 NodeWelcome = new NodeWelcomeMessage
                 {
-                    Nodes = Members
-                        .Where(x => x.Node.Id != m.NodeId)
+                    NodeId = memberSelf.Id,
+                    Nodes = otherMembers
+                        .Where(x => x.Node.Id != m.NodeId) // exclude the newly joined node
                         .Select(x => new ActiveNode
                         {
                             NodeId = x.Node.Id,
-                            NodeAddress = ((IPEndPointAddress)x.Node.Address).EndPoint.ToString(),
+                            NodeAddress = ((IPEndPointAddress)x.Node.Address).EndPoint.Address.ToString(),
                             NodePort = ((IPEndPointAddress)x.Node.Address).EndPoint.Port
                         })
                         .ToList()
                 }
             };
 
-            if (message.NodeWelcome.Nodes.Count == 0)
-            {
-                // Nothing to share with the new joiner
-                return Task.CompletedTask;
-            }
-
-            logger.LogDebug("Sending Welcome to {NodeId} on {NodeEndPoint} with {NodeCount} known members", m.NodeId, endPoint, message.NodeWelcome.Nodes.Count);
+            logger.LogDebug("Sending Welcome to {NodeId} on {NodeEndPoint} with {NodeCount} known members (including self)", m.NodeId, endPoint, message.NodeWelcome.Nodes.Count + 1);
 
             return SendMessage(message, endPoint);
         }
 
-        protected Task OnNodeWelcome(NodeWelcomeMessage m, IPEndPoint endPoint)
+        protected Task OnNodeWelcome(NodeWelcomeMessage m, IPEndPoint senderEndPoint)
         {
-            logger.LogInformation("Recieved starting list of nodes ({NodeCount}) from {NodeEndPoint}", m.Nodes.Count, endPoint);
+            logger.LogInformation("Recieved starting list of nodes ({NodeCount}) from {NodeEndPoint}", m.Nodes.Count + 1, senderEndPoint);
 
             otherMembers.Mutate(list =>
             {
                 foreach (var node in m.Nodes)
                 {
-                    if (list.All(x => x.Id != node.NodeId) && node.NodeId != memberSelf.Id)
+                    if (node.NodeId != memberSelf.Id)
                     {
-                        var member = new SwimMember(node.NodeId, new IPEndPointAddress(endPoint), time.Now, 0/* ToDo: Do we need to pass incarnation? */, SwimMemberStatus.Active, NotifyStatusChanged);
-                        list.Add(member);
+                        if (list.All(x => x.Id != node.NodeId))
+                        {
+                            var member = CreateMember(node.NodeId, 0, new IPEndPoint(IPAddress.Parse(node.NodeAddress), node.NodePort));
+                            list.Add(member);
+                        }
                     }
+                    else
+                    {
+                        // Record the observed external IP address for self
+                        memberSelf.OnObservedAddress(senderEndPoint);
+                    }
+                }
+
+                // Add the sender member (not included in the welcome message node list)
+                if (list.All(x => x.Id != m.NodeId))
+                {
+                    var member = CreateMember(m.NodeId, 0, senderEndPoint);
+                    list.Add(member);
                 }
             });
 
