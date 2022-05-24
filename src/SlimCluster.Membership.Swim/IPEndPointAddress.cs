@@ -16,5 +16,17 @@
         public override int GetHashCode() => HashCode.Combine(EndPoint);
         
         public static readonly IPEndPointAddress Unknown = new(new IPEndPoint(IPAddress.None, 0));
+
+        public static IPEndPointAddress Parse(string s)
+        {
+            var elements = s.Split(":", StringSplitOptions.RemoveEmptyEntries);
+            if (elements.Length != 2)
+            {
+                throw new ApplicationException($"Invalid node address format: {s}");
+            }
+
+            var ipEndPoint = new IPEndPoint(IPAddress.Parse(elements[0]), int.Parse(elements[1]));
+            return new IPEndPointAddress(ipEndPoint);
+        }
     }
 }

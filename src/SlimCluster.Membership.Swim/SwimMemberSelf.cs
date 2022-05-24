@@ -7,8 +7,8 @@
     {
         private ILogger<SwimMemberSelf> logger;
 
-        public SwimMemberSelf(string id, int incarnation, IPEndPointAddress address, ITime time, ILoggerFactory loggerFactory)
-            : base(id, address, time.Now, incarnation, SwimMemberStatus.Active, notifyStatusChanged: null, loggerFactory.CreateLogger<SwimMember>())
+        public SwimMemberSelf(string id, IPEndPointAddress address, ITime time, ILoggerFactory loggerFactory)
+            : base(id, address, time.Now,  SwimMemberStatus.Active, notifyStatusChanged: null, loggerFactory.CreateLogger<SwimMember>())
         {
             this.logger = loggerFactory.CreateLogger<SwimMemberSelf>();
         }

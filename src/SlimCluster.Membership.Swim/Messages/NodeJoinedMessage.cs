@@ -6,13 +6,9 @@
     {
         public string NodeId { get; set; } = string.Empty;
 
-        [JsonProperty("inc")]
-        public int Incarnation { get; set; }
-
-        public NodeJoinedMessage(string nodeId, int incarnation)
+        public NodeJoinedMessage(string nodeId)
         {
             NodeId = nodeId;
-            Incarnation = incarnation;
         }
     }
 }

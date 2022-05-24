@@ -144,8 +144,7 @@
                 return Task.CompletedTask;
             }
 
-            var targetNodeAddress = pingNode.Address.EndPoint.Address.ToString();
-            var targetNodePort = pingNode.Address.EndPoint.Port;
+            var targetNodeAddress = pingNode.Address.ToString();
 
             Task SendPingReq(SwimMember member)
             {
@@ -155,7 +154,6 @@
                     {
                         PeriodSequenceNumber = PeriodSequenceNumber,
                         NodeAddress = targetNodeAddress,
-                        NodePort = targetNodePort,
                     }
                 };
                 return messageSender.SendMessage(message, member.Address.EndPoint);
@@ -175,7 +173,7 @@
                 if (pingNode.Status == SwimMemberStatus.Confirming)
                 {
                     // When the node Ack did not arrive (via direct ping or via inderect ping-req) then declare this node as unhealty
-                    pingNode.OnSuspicious();
+                    pingNode.OnFaulted();
 
                     logger.LogInformation("Node {NodeId} was declared as {NodeStatus} - ack message for ping (direct or indirect) did not arrive in time for period {PeriodSequenceNumber}", pingNode.Id, pingNode.Status, PeriodSequenceNumber);
                 }
@@ -219,7 +217,7 @@
             return messageSender.SendMessage(message, pingNode.Address.EndPoint);
         }
 
-        public Task OnPingAck(AckMessage m, IPEndPoint senderEndPoint)
+        public Task OnPingAckArrived(AckMessage m, IPEndPoint senderEndPoint)
         {
             var node = otherMembers.SingleOrDefault(x => x.Id == m.NodeId);
             if (node != null)

@@ -8,10 +8,5 @@
         /// Node address that sent this Ping
         /// </summary>
         public string NodeAddress { get; set; } = string.Empty;
-
-        /// <summary>
-        /// Node port that sent this Ping
-        /// </summary>
-        public int NodePort { get; set; }
     }
 }

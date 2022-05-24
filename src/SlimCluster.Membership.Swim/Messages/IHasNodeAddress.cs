@@ -9,11 +9,5 @@
         /// </summary>
         [JsonProperty("ta")]
         string NodeAddress { get; set; }
-
-        /// <summary>
-        /// Node port that sent this Ping
-        /// </summary>
-        [JsonProperty("tp")]
-        public int NodePort { get; set; }
     }
 }

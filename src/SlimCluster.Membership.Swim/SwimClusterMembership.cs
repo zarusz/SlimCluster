@@ -22,6 +22,7 @@
         private readonly SwimClusterMembershipOptions options;
         private readonly ISerializer serializer;
         private readonly ITime time;
+        private readonly SwimMembershipEventBuffer membershipEventBuffer;
 
         /// <summary>
         /// Other known members
@@ -49,7 +50,7 @@
         /// <summary>
         /// The protocol period loop (failure detection).
         /// </summary>
-        private SwimFailureDetector? protocolPeriod;
+        private SwimFailureDetector? failureDetector;
 
         public SwimClusterMembership(ILoggerFactory loggerFactory, IOptions<SwimClusterMembershipOptions> options, ISerializer serializer, ITime time)
         {
@@ -59,10 +60,11 @@
             this.time = time;
             this.options = options.Value;
 
+            this.membershipEventBuffer = new SwimMembershipEventBuffer(this.options.MembershipEventBufferCount);
             this.indirectPingRequests = new SnapshottedReadOnlyList<IndirectPingRequest>();
 
             this.otherMembers = new SnapshottedReadOnlyList<SwimMember>();
-            this.memberSelf = new SwimMemberSelf(this.options.NodeId, 0, IPEndPointAddress.Unknown, time, loggerFactory);
+            this.memberSelf = new SwimMemberSelf(this.options.NodeId, IPEndPointAddress.Unknown, time, loggerFactory);
 
             this.multicastGroupAddress = IPAddress.Parse(this.options.MulticastGroupAddress);
         }
@@ -101,13 +103,13 @@
                 // Run the message processing loop
                 recieveLoopTask = Task.Factory.StartNew(() => RecieveLoop(), TaskCreationOptions.LongRunning);
 
-                protocolPeriod = new SwimFailureDetector(loggerFactory.CreateLogger<SwimFailureDetector>(), options, this, otherMembers, time);
+                failureDetector = new SwimFailureDetector(loggerFactory.CreateLogger<SwimFailureDetector>(), options, this, otherMembers, time);
 
                 isStarted = true;
 
                 logger.LogInformation("Cluster membership protocol (SWIM) started");
 
-                await NotifyJoined();
+                await NotifySelfJoined();
             }
         }
 
@@ -119,10 +121,10 @@
 
                 loopCts?.Cancel();
 
-                if (protocolPeriod != null)
+                if (failureDetector != null)
                 {
-                    await protocolPeriod.DisposeAsync();
-                    protocolPeriod = null;
+                    await failureDetector.DisposeAsync();
+                    failureDetector = null;
                 }
 
                 if (recieveLoopTask != null)
@@ -137,7 +139,7 @@
                     recieveLoopTask = null;
                 }
 
-                await NotifyLeft();
+                await NotifySelfLeft();
 
                 // Stop multicast group
                 lock (udpClientLock)
@@ -169,28 +171,28 @@
 
         public Task SendMessage<T>(T message, IPEndPoint endPoint) where T : class
         {
+            if (message is NodeMessage nodeMessage)
+            {
+                OnSendingMessage(nodeMessage);
+            }
+
             var payload = serializer.Serialize(message);
             logger.LogTrace("Sending message to {NodeEndPoint}", endPoint);
             return udpClient?.SendAsync(payload, payload.Length, endPoint) ?? Task.CompletedTask;
         }
 
-        protected void NotifyStatusChanged(SwimMember member)
-        {
-            MemberStatusChanged?.Invoke(this, new MemberEventArgs(member, time.Now));
-        }
-
-        protected Task NotifyJoined() =>
+        protected Task NotifySelfJoined() =>
             // Announce (multicast) to others that this node joined the network
-            SendToMulticastGroup(new NodeMessage { NodeJoined = new NodeJoinedMessage(memberSelf.Id, memberSelf.Incarnation) }, nameof(NodeJoinedMessage));
+            SendToMulticastGroup(new NodeMessage { NodeJoined = new NodeJoinedMessage(memberSelf.Id) }, nameof(NodeJoinedMessage));
 
-        protected Task NotifyLeft() =>
+        protected Task NotifySelfLeft() =>
             // Announce (multicast) to others that this node left the network
-            SendToMulticastGroup(new NodeMessage { NodeLeft = new NodeLeftMessage(memberSelf.Id, memberSelf.Incarnation) }, nameof(NodeLeftMessage));
+            SendToMulticastGroup(new NodeMessage { NodeLeft = new NodeLeftMessage(memberSelf.Id) }, nameof(NodeLeftMessage));
 
         private Task SendToMulticastGroup(NodeMessage message, string messageType)
         {
             var endPoint = new IPEndPoint(multicastGroupAddress, options.Port);
-            logger.LogInformation("Sending {MessageType} for node {NodeId} (incarnation {NodeIncarnation}) on the multicast group {MulticastEndPoint}", messageType, memberSelf.Id, memberSelf.Incarnation, endPoint);
+            logger.LogInformation("Sending {MessageType} for node {NodeId} on the multicast group {MulticastEndPoint}", messageType, memberSelf.Id, endPoint);
             return SendMessage(message, endPoint);
         }
 
@@ -207,7 +209,7 @@
                         var msg = serializer.Deserialize<NodeMessage>(result.Buffer);
                         if (msg != null)
                         {
-                            await OnMessage(msg, result.RemoteEndPoint);
+                            await OnMessageArrived(msg, result.RemoteEndPoint);
                         }
                     }
                     catch (Exception e)
@@ -230,7 +232,7 @@
             }
         }
 
-        private async Task OnMessage(NodeMessage msg, IPEndPoint remoteEndPoint)
+        private async Task OnMessageArrived(NodeMessage msg, IPEndPoint remoteEndPoint)
         {
             if (msg.NodeJoined != null)
             {
@@ -244,7 +246,7 @@
 
             if (msg.NodeLeft != null)
             {
-                await OnNodeLeft(msg.NodeLeft, remoteEndPoint);
+                await OnNodeLeft(msg.NodeLeft);
             }
 
             if (msg.Ping != null)
@@ -261,48 +263,155 @@
             {
                 await OnPingAck(msg.Ack, remoteEndPoint);
             }
+
+            // process gossip events
+            if (msg.Events != null)
+            {
+                await OnGossipEventsArrived(msg.Events);
+            }
         }
 
-        protected SwimMember CreateMember(string nodeId, int incarnation, IPEndPoint endPoint) 
-            => new (nodeId, new IPEndPointAddress(endPoint), time.Now, incarnation, SwimMemberStatus.Active, NotifyStatusChanged, loggerFactory.CreateLogger<SwimMember>());
+        private void OnSendingMessage(NodeMessage m)
+        {
+            if (m.Ping != null || m.Ack != null)
+            {
+                // piggy back on ping and ack messages to send gossip events
+                m.Events = membershipEventBuffer.GetNextEvents(options.MembershipEventPiggybackCount);
+            }
+        }
+
+        protected async Task OnGossipEventsArrived(IEnumerable<MembershipEvent> events)
+        {
+            foreach (var e in events)
+            {
+                // process only if this is trully a new event (we did not observe it before)
+                if (membershipEventBuffer.Add(e))
+                {
+                    if (e.Type == MembershipEventType.Joined)
+                    {
+                        if (e.NodeAddress == null)
+                        {
+                            throw new ArgumentNullException($"{nameof(e.NodeAddress)} needs to be provided for event type {e.Type}");
+                        }
+                        var address = IPEndPointAddress.Parse(e.NodeAddress);
+                        await OnNodeJoined(new NodeJoinedMessage(e.NodeId), address.EndPoint);
+                    }
+                    if (e.Type == MembershipEventType.Left || e.Type == MembershipEventType.Faulted)
+                    {
+                        await OnNodeLeft(new NodeLeftMessage(e.NodeId));
+                    }
+                }
+            }
+        }
+
+        protected SwimMember CreateMember(string nodeId, IPEndPointAddress endPoint)
+            => new(nodeId, endPoint, time.Now, SwimMemberStatus.Active, OnMemberStatusChanged, loggerFactory.CreateLogger<SwimMember>());
 
         protected Task OnNodeJoined(NodeJoinedMessage m, IPEndPoint senderEndPoint)
         {
             // Add other members only
             if (m.NodeId != memberSelf.Id)
             {
-                logger.LogInformation("Node {NodeId} (incarnation {NodeIncarnation}) joined at {NodeEndPoint}", m.NodeId, m.Incarnation, senderEndPoint);
-
-                var member = CreateMember(m.NodeId, m.Incarnation, senderEndPoint);
-                otherMembers.Mutate(list => list.Add(member));
-
-                try
+                var member = otherMembers.SingleOrDefault(x => x.Id == m.NodeId);
+                if (member == null)
                 {
-                    MemberJoined?.Invoke(this, new MemberEventArgs(member.Node, member.LastSeen));
-                }
-                catch (Exception e)
-                {
-                    logger.LogWarning(e, "Exception while invoking event {HandlerName}", nameof(MemberJoined));
-                }
+                    logger.LogInformation("Node {NodeId} joined at {NodeEndPoint}", m.NodeId, senderEndPoint);
 
-                if (options.WelcomeMessage.IsEnabled)
-                {
-                    // Send welcome
+                    member = CreateMember(m.NodeId, new IPEndPointAddress(senderEndPoint));
+                    otherMembers.Mutate(list => list.Add(member));
 
-                    // If random, toss a coin - to avoid every node sending the same memberlist data
-                    if (!options.WelcomeMessage.IsRandom || random.Next(2) == 1)
+                    if (options.WelcomeMessage.IsEnabled)
                     {
-                        // Fire & forget
-                        _ = SendWelcome(m, senderEndPoint);
+                        // Send welcome
+
+                        // If random, toss a coin - to avoid every node sending the same memberlist data
+                        if (!options.WelcomeMessage.IsRandom || random.Next(2) == 1)
+                        {
+                            // Fire & forget
+                            _ = SendWelcome(m, senderEndPoint);
+                        }
                     }
+
+                    _ = NotifyMemberJoined(member);
                 }
             }
             else
             {
                 // Record the observed external IP address for self
-                memberSelf.OnObservedAddress(senderEndPoint);
+                if (memberSelf.OnObservedAddress(senderEndPoint))
+                {
+                    _ = NotifyMemberChanged(memberSelf);
+                }
             }
 
+            return Task.CompletedTask;
+        }
+
+        protected Task OnNodeLeft(NodeLeftMessage m)
+        {
+            // Add other members only
+            if (m.NodeId != memberSelf.Id)
+            {
+                var member = otherMembers.SingleOrDefault(x => x.Id == m.NodeId);
+                if (member != null)
+                {
+                    logger.LogInformation("Node {NodeId} left at {NodeEndPoint}", m.NodeId, member.Address.EndPoint);
+                    otherMembers.Mutate(list => list.Remove(member));
+
+                    NotifyMemberLeft(member);
+                }
+            }
+            return Task.CompletedTask;
+        }
+
+        protected void OnMemberStatusChanged(SwimMember member)
+        {
+            if (member.SwimStatus == SwimMemberStatus.Faulted)
+            {
+                _ = OnNodeLeft(new NodeLeftMessage(member.Id));
+            }
+            else
+            {
+                _ = NotifyMemberChanged(member);
+            }
+        }
+
+        private Task NotifyMemberChanged(SwimMember member)
+        {
+            try
+            {
+                MemberStatusChanged?.Invoke(this, new MemberEventArgs(member, time.Now));
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning(e, "Exception while invoking event {HandlerName}", nameof(MemberStatusChanged));
+            }
+            return Task.CompletedTask;
+        }
+
+        private Task NotifyMemberJoined(SwimMember member)
+        {
+            try
+            {
+                MemberJoined?.Invoke(this, new MemberEventArgs(member.Node, member.LastSeen));
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning(e, "Exception while invoking event {HandlerName}", nameof(MemberJoined));
+            }
+            return Task.CompletedTask;
+        }
+
+        private Task NotifyMemberLeft(SwimMember member)
+        {
+            try
+            {
+                MemberLeft?.Invoke(this, new MemberEventArgs(member.Node, member.LastSeen));
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning(e, "Exception while invoking event {HandlerName}", nameof(MemberLeft));
+            }
             return Task.CompletedTask;
         }
 
@@ -321,8 +430,7 @@
                         .Select(x => new ActiveNode
                         {
                             NodeId = x.Node.Id,
-                            NodeAddress = ((IPEndPointAddress)x.Node.Address).EndPoint.Address.ToString(),
-                            NodePort = ((IPEndPointAddress)x.Node.Address).EndPoint.Port
+                            NodeAddress = x.Node.Address.ToString(),
                         })
                         .ToList()
                 }
@@ -345,7 +453,7 @@
                     {
                         if (list.All(x => x.Id != node.NodeId))
                         {
-                            var member = CreateMember(node.NodeId, 0, new IPEndPoint(IPAddress.Parse(node.NodeAddress), node.NodePort));
+                            var member = CreateMember(node.NodeId, IPEndPointAddress.Parse(node.NodeAddress));
                             list.Add(member);
                         }
                     }
@@ -359,38 +467,13 @@
                 // Add the sender member (not included in the welcome message node list)
                 if (list.All(x => x.Id != m.NodeId))
                 {
-                    var member = CreateMember(m.NodeId, 0, senderEndPoint);
+                    var member = CreateMember(m.NodeId, new IPEndPointAddress(senderEndPoint));
                     list.Add(member);
                 }
             });
 
             // ToDo: Invoke an event hook
 
-            return Task.CompletedTask;
-        }
-
-        protected Task OnNodeLeft(NodeLeftMessage m, IPEndPoint endPoint)
-        {
-            // Add other members only
-            if (m.NodeId != memberSelf.Id)
-            {
-                logger.LogInformation("Node {NodeId} (incarnation {NodeIncarnation}) left at {NodeEndPoint}", m.NodeId, m.Incarnation, endPoint);
-
-                var member = otherMembers.SingleOrDefault(x => x.Node.Id == m.NodeId);
-                if (member != null)
-                {
-                    otherMembers.Mutate(list => list.Remove(member));
-
-                    try
-                    {
-                        MemberLeft?.Invoke(this, new MemberEventArgs(member.Node, member.LastSeen));
-                    }
-                    catch (Exception e)
-                    {
-                        logger.LogWarning(e, "Exception while invoking event {HandlerName}", nameof(MemberLeft));
-                    }
-                }
-            }
             return Task.CompletedTask;
         }
 
@@ -415,7 +498,7 @@
 
         protected Task OnPingReq(PingReqMessage m, IPEndPoint senderEndPoint)
         {
-            var targetNodeEndpoint = new IPEndPoint(IPAddress.Parse(m.NodeAddress), m.NodePort);
+            var targetNodeEndpoint = IPEndPointAddress.Parse(m.NodeAddress).EndPoint;
 
             // Record PingReq in local list with expiration
             var indirectPingRequest = new IndirectPingRequest(
@@ -449,7 +532,7 @@
 
         protected async Task OnPingAck(AckMessage m, IPEndPoint senderEndPoint)
         {
-            if (protocolPeriod == null)
+            if (failureDetector == null)
             {
                 // This is stopping (disposing).
                 return;
@@ -472,7 +555,7 @@
             }
 
             // Let the protocol period know that an Ack arrived
-            await protocolPeriod.OnPingAck(m, senderEndPoint);
+            await failureDetector.OnPingAckArrived(m, senderEndPoint);
         }
     }
 }

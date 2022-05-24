@@ -4,6 +4,5 @@
     {
         public string NodeId { get; set; } = string.Empty;
         public string NodeAddress { get; set; } = string.Empty;
-        public int NodePort { get; set; }
     }
 }
