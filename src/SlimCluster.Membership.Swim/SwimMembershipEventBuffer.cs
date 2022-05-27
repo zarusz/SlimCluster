@@ -40,13 +40,26 @@
         {
             lock (itemsLock)
             {
-                // if contains the event already then skip
-                if (items.Any(x => x.MemberEvent == e))
+                if (items.Any(x => x.MemberEvent.Equals(e)))
                 {
+                    // if contains the event already then skip
                     return false;
                 }
 
                 var newItem = new BufferItem(e);
+
+                var indexOfNodeEvent = items.FindIndex(x => x.MemberEvent.NodeId == e.NodeId);
+                if (indexOfNodeEvent != -1)
+                {
+                    // Replace the previous event for the same node (prefer younger event)
+                    if (items[indexOfNodeEvent].MemberEvent.Timestamp < newItem.MemberEvent.Timestamp)
+                    {
+                        items[indexOfNodeEvent] = newItem;
+                        return true;
+                    }
+                    return false;
+                }
+
                 if (items.Count + 1 < items.Capacity)
                 {
                     items.Add(newItem);
@@ -86,7 +99,7 @@
             lock (itemsLock)
             {
                 var selectedItems = items
-                    .OrderByDescending(x => x.UsedCount)
+                    .OrderBy(x => x.UsedCount)
                     .ThenBy(x => x.MemberEvent.Timestamp)
                     .Take(top)
                     .ToList();

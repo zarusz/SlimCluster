@@ -42,39 +42,43 @@
 
             //var raftCluster = serviceProvider.GetRequiredService<RaftCluster>();
             var clusterMembership = serviceProvider.GetRequiredService<IClusterMembership>();
+            var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
+
+            void PrintActiveMembers() => logger.LogInformation("This node is aware of {NodeList}", string.Join(", ", clusterMembership.Members.Select(x => x.Node.ToString())));
 
             clusterMembership.MemberJoined += (target, e) =>
             {
-                Console.WriteLine("The node {0} joined", e.Node.Id);
-                Console.WriteLine("This node is aware of {0}", string.Join(", ", clusterMembership.Members.Select(x => x.Node.ToString())));
+                logger.LogInformation("The member {NodeId} joined", e.Node.Id);
+                PrintActiveMembers();
             };
 
             clusterMembership.MemberLeft += (target, e) =>
             {
-                Console.WriteLine("The node {0} left", e.Node.Id);
+                logger.LogInformation("The member {NodeId} left/faulted", e.Node.Id);
+                PrintActiveMembers();
             };
 
             clusterMembership.MemberStatusChanged += (target, e) =>
             {
                 if (e.Node.Status == SwimMemberStatus.Suspicious)
                 {
-                    Console.WriteLine("The node {0} is suspicious. All active members are: {1}", e.Node.Id, string.Join(", ", clusterMembership.Members.Where(x => x.Node.Status == SwimMemberStatus.Active)));
+                    logger.LogInformation("The node {NodeId} is suspicious. All active members are: {NodeList}", e.Node.Id, string.Join(", ", clusterMembership.Members.Where(x => x.Node.Status == SwimMemberStatus.Active)));
                 }
             };
 
-            Console.WriteLine("Node is starting...");
+            logger.LogInformation("Node is starting...");
             await clusterMembership.Start();
 
-            Console.WriteLine("Node is running");
+            logger.LogInformation("Node is running");
 
             var taskCompletionSource = new TaskCompletionSource<object?>();
             Console.CancelKeyPress += (target, e) => taskCompletionSource.TrySetResult(null);
 
             await taskCompletionSource.Task;
 
-            Console.WriteLine("Node is stopping...");
+            logger.LogInformation("Node is stopping...");
             await clusterMembership.Stop();
-            Console.WriteLine("Node is stopped");
+            logger.LogInformation("Node is stopped");
         }
     }
 
@@ -98,6 +102,7 @@
                 opts.Port = options.UdpPort;
                 opts.MulticastGroupAddress = options.UdpMulticastGroupAddress;
                 opts.ClusterId = "MyMicroserviceCluster";
+                opts.MembershipEventPiggybackCount = 2;
             });
 
             //// Membership config

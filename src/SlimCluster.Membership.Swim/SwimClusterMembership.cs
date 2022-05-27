@@ -22,7 +22,7 @@
         private readonly SwimClusterMembershipOptions options;
         private readonly ISerializer serializer;
         private readonly ITime time;
-        private readonly SwimMembershipEventBuffer membershipEventBuffer;
+        private readonly Random random = new();
 
         /// <summary>
         /// Other known members
@@ -48,6 +48,11 @@
         public event IClusterMembership.MemberStatusChangedEventHandler? MemberStatusChanged;
 
         /// <summary>
+        /// The gossip component.
+        /// </summary>
+        private SwimGossip? gossip;
+
+        /// <summary>
         /// The protocol period loop (failure detection).
         /// </summary>
         private SwimFailureDetector? failureDetector;
@@ -60,7 +65,6 @@
             this.time = time;
             this.options = options.Value;
 
-            this.membershipEventBuffer = new SwimMembershipEventBuffer(this.options.MembershipEventBufferCount);
             this.indirectPingRequests = new SnapshottedReadOnlyList<IndirectPingRequest>();
 
             this.otherMembers = new SnapshottedReadOnlyList<SwimMember>();
@@ -103,6 +107,7 @@
                 // Run the message processing loop
                 recieveLoopTask = Task.Factory.StartNew(() => RecieveLoop(), TaskCreationOptions.LongRunning);
 
+                gossip = new SwimGossip(loggerFactory.CreateLogger<SwimGossip>(), options, this);
                 failureDetector = new SwimFailureDetector(loggerFactory.CreateLogger<SwimFailureDetector>(), options, this, otherMembers, time);
 
                 isStarted = true;
@@ -141,6 +146,11 @@
 
                 await NotifySelfLeft();
 
+                if (gossip != null)
+                {
+                    gossip = null;
+                }
+
                 // Stop multicast group
                 lock (udpClientLock)
                 {
@@ -173,7 +183,7 @@
         {
             if (message is NodeMessage nodeMessage)
             {
-                OnSendingMessage(nodeMessage);
+                gossip?.OnMessageSending(nodeMessage);
             }
 
             var payload = serializer.Serialize(message);
@@ -236,7 +246,7 @@
         {
             if (msg.NodeJoined != null)
             {
-                await OnNodeJoined(msg.NodeJoined, remoteEndPoint);
+                await OnNodeJoined(msg.NodeJoined.NodeId, remoteEndPoint, addToEventBuffer: true);
             }
 
             if (msg.NodeWelcome != null)
@@ -246,7 +256,7 @@
 
             if (msg.NodeLeft != null)
             {
-                await OnNodeLeft(msg.NodeLeft);
+                await OnNodeLeft(msg.NodeLeft.NodeId, addToEventBuffer: true);
             }
 
             if (msg.Ping != null)
@@ -265,60 +275,36 @@
             }
 
             // process gossip events
-            if (msg.Events != null)
+            if (gossip != null)
             {
-                await OnGossipEventsArrived(msg.Events);
-            }
-        }
-
-        private void OnSendingMessage(NodeMessage m)
-        {
-            if (m.Ping != null || m.Ack != null)
-            {
-                // piggy back on ping and ack messages to send gossip events
-                m.Events = membershipEventBuffer.GetNextEvents(options.MembershipEventPiggybackCount);
-            }
-        }
-
-        protected async Task OnGossipEventsArrived(IEnumerable<MembershipEvent> events)
-        {
-            foreach (var e in events)
-            {
-                // process only if this is trully a new event (we did not observe it before)
-                if (membershipEventBuffer.Add(e))
-                {
-                    if (e.Type == MembershipEventType.Joined)
-                    {
-                        if (e.NodeAddress == null)
-                        {
-                            throw new ArgumentNullException($"{nameof(e.NodeAddress)} needs to be provided for event type {e.Type}");
-                        }
-                        var address = IPEndPointAddress.Parse(e.NodeAddress);
-                        await OnNodeJoined(new NodeJoinedMessage(e.NodeId), address.EndPoint);
-                    }
-                    if (e.Type == MembershipEventType.Left || e.Type == MembershipEventType.Faulted)
-                    {
-                        await OnNodeLeft(new NodeLeftMessage(e.NodeId));
-                    }
-                }
+                await gossip.OnMessageArrived(msg);
             }
         }
 
         protected SwimMember CreateMember(string nodeId, IPEndPointAddress endPoint)
             => new(nodeId, endPoint, time.Now, SwimMemberStatus.Active, OnMemberStatusChanged, loggerFactory.CreateLogger<SwimMember>());
 
-        protected Task OnNodeJoined(NodeJoinedMessage m, IPEndPoint senderEndPoint)
+        public Task OnNodeJoined(string nodeId, IPEndPoint senderEndPoint)
+            => OnNodeJoined(nodeId, senderEndPoint, addToEventBuffer: false);
+
+        protected Task OnNodeJoined(string nodeId, IPEndPoint senderEndPoint, bool addToEventBuffer)
         {
             // Add other members only
-            if (m.NodeId != memberSelf.Id)
+            if (nodeId != memberSelf.Id)
             {
-                var member = otherMembers.SingleOrDefault(x => x.Id == m.NodeId);
+                var member = otherMembers.SingleOrDefault(x => x.Id == nodeId);
                 if (member == null)
                 {
-                    logger.LogInformation("Node {NodeId} joined at {NodeEndPoint}", m.NodeId, senderEndPoint);
+                    logger.LogInformation("Node {NodeId} joined at {NodeEndPoint}", nodeId, senderEndPoint);
 
-                    member = CreateMember(m.NodeId, new IPEndPointAddress(senderEndPoint));
+                    member = CreateMember(nodeId, new IPEndPointAddress(senderEndPoint));
                     otherMembers.Mutate(list => list.Add(member));
+
+                    if (addToEventBuffer)
+                    {
+                        // Notify the member joined
+                        gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Joined, time.Now) { NodeAddress = member.Address.ToString() });
+                    }
 
                     if (options.WelcomeMessage.IsEnabled)
                     {
@@ -328,7 +314,7 @@
                         if (!options.WelcomeMessage.IsRandom || random.Next(2) == 1)
                         {
                             // Fire & forget
-                            _ = SendWelcome(m, senderEndPoint);
+                            _ = SendWelcome(nodeId, senderEndPoint);
                         }
                     }
 
@@ -347,18 +333,27 @@
             return Task.CompletedTask;
         }
 
-        protected Task OnNodeLeft(NodeLeftMessage m)
+        public Task OnNodeLeft(string nodeId)
+            => OnNodeLeft(nodeId, addToEventBuffer: false);
+
+        protected Task OnNodeLeft(string nodeId, bool addToEventBuffer)
         {
             // Add other members only
-            if (m.NodeId != memberSelf.Id)
+            if (nodeId != memberSelf.Id)
             {
-                var member = otherMembers.SingleOrDefault(x => x.Id == m.NodeId);
+                var member = otherMembers.SingleOrDefault(x => x.Id == nodeId);
                 if (member != null)
                 {
-                    logger.LogInformation("Node {NodeId} left at {NodeEndPoint}", m.NodeId, member.Address.EndPoint);
+                    logger.LogInformation("Node {NodeId} left at {NodeEndPoint}", nodeId, member.Address.EndPoint);
                     otherMembers.Mutate(list => list.Remove(member));
 
-                    NotifyMemberLeft(member);
+                    if (addToEventBuffer)
+                    {
+                        // Notify the member faulted
+                        gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Left, time.Now));
+                    }
+
+                    _ = NotifyMemberLeft(member);
                 }
             }
             return Task.CompletedTask;
@@ -368,7 +363,10 @@
         {
             if (member.SwimStatus == SwimMemberStatus.Faulted)
             {
-                _ = OnNodeLeft(new NodeLeftMessage(member.Id));
+                // Notify the member faulted
+                gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Faulted, time.Now));
+
+                _ = OnNodeLeft(member.Id);
             }
             else
             {
@@ -415,9 +413,7 @@
             return Task.CompletedTask;
         }
 
-        private readonly Random random = new();
-
-        private Task SendWelcome(NodeJoinedMessage m, IPEndPoint endPoint)
+        private Task SendWelcome(string nodeId, IPEndPoint endPoint)
         {
             var message = new NodeMessage
             {
@@ -426,7 +422,7 @@
                     NodeId = memberSelf.Id,
                     Nodes = otherMembers
                         .Where(x => x.SwimStatus.IsActive) // only active members
-                        .Where(x => x.Node.Id != m.NodeId) // exclude the newly joined node
+                        .Where(x => x.Node.Id != nodeId) // exclude the newly joined node
                         .Select(x => new ActiveNode
                         {
                             NodeId = x.Node.Id,
@@ -436,7 +432,7 @@
                 }
             };
 
-            logger.LogDebug("Sending Welcome to {NodeId} on {NodeEndPoint} with {NodeCount} known members (including self)", m.NodeId, endPoint, message.NodeWelcome.Nodes.Count + 1);
+            logger.LogDebug("Sending Welcome to {NodeId} on {NodeEndPoint} with {NodeCount} known members (including self)", nodeId, endPoint, message.NodeWelcome.Nodes.Count + 1);
 
             return SendMessage(message, endPoint);
         }

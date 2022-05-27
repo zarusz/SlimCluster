@@ -11,10 +11,10 @@
 
         public string NodeId { get; set; } = string.Empty;
 
-        public DateTimeOffset Timestamp { get; set; }
-
         [JsonProperty("na")]
         public string? NodeAddress { get; set; }
+
+        public DateTimeOffset Timestamp { get; set; }
 
         [JsonProperty("typ")]
         public MembershipEventType Type { get; set; }
@@ -25,5 +25,17 @@
         public override int GetHashCode() => HashCode.Combine(EventId);
 
         #endregion
+
+        public MembershipEvent()
+        {
+        }
+
+        public MembershipEvent(string nodeId, MembershipEventType type, DateTimeOffset timestamp)
+        {
+            EventId = Guid.NewGuid();
+            NodeId = nodeId;
+            Timestamp = timestamp;
+            Type = type;
+        }
     }
 }
