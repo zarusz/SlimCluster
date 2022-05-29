@@ -1,4 +1,4 @@
-﻿namespace SlimCluster.Membership.Swim.Serialization
+﻿namespace SlimCluster.Serialization
 {
     public interface ISerializer
     {

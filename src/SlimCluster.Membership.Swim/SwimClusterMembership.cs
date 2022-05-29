@@ -3,7 +3,7 @@
     using Microsoft.Extensions.Logging;
     using Microsoft.Extensions.Options;
     using SlimCluster.Membership.Swim.Messages;
-    using SlimCluster.Membership.Swim.Serialization;
+    using SlimCluster.Serialization;
     using System;
     using System.Collections.Generic;
     using System.Linq;

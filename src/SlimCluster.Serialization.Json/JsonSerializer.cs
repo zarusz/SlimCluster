@@ -1,24 +1,25 @@
-﻿namespace SlimCluster.Membership.Swim.Serialization
+﻿namespace SlimCluster.Serialization.Json
 {
     using Newtonsoft.Json;
+    using SlimCluster.Serialization;
     using System;
     using System.Text;
 
-    public class JsonMessageSerializer : ISerializer
+    public class JsonSerializer : ISerializer
     {
         private readonly Encoding encoding;
         private readonly JsonSerializerSettings settings;
 
-        public JsonMessageSerializer(Encoding encoding)
+        public JsonSerializer(Encoding encoding)
         {
             this.encoding = encoding;
-            this.settings = new JsonSerializerSettings
+            settings = new JsonSerializerSettings
             {
                 DateTimeZoneHandling = DateTimeZoneHandling.Utc
             };
         }
 
-        public JsonMessageSerializer() : this(Encoding.ASCII)
+        public JsonSerializer() : this(Encoding.ASCII)
         {
         }
 

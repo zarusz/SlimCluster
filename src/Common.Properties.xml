@@ -1,14 +1,20 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
-    <Product>SlimMessageBus</Product>
+    <Product>SlimCluster</Product>
     <Company>zarusz</Company>
     <Authors>zarusz</Authors>
-    <Copyright>Copyright © 2021</Copyright>
-    <PackageReleaseNotes>See https://github.com/zarusz/SlimMessageBus/releases</PackageReleaseNotes>
-    <RepositoryUrl>https://github.com/zarusz/SlimMessageBus</RepositoryUrl>
-    <PackageProjectUrl>https://github.com/zarusz/SlimMessageBus</PackageProjectUrl>
+    <Copyright>Copyright © 2022</Copyright>
+    <PackageReleaseNotes>See https://github.com/zarusz/SlimCluster/releases</PackageReleaseNotes>
+    <RepositoryUrl>https://github.com/zarusz/SlimCluster</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/zarusz/SlimCluster</PackageProjectUrl>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <PackageIcon>icon.png</PackageIcon>
+    <Version>1.0.0-rc1</Version>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 </Project>

@@ -6,10 +6,12 @@
     using Microsoft.Extensions.Logging;
     using SlimCluster.Membership;
     using SlimCluster.Membership.Swim;
+    using SlimCluster.Serialization.Json;
     using SlimCluster.Strategy.Raft;
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using System.Text;
     using System.Threading.Tasks;
 
     public class CommandLineOptions
@@ -103,7 +105,8 @@
                 opts.MulticastGroupAddress = options.UdpMulticastGroupAddress;
                 opts.ClusterId = "MyMicroserviceCluster";
                 opts.MembershipEventPiggybackCount = 2;
-            });
+            },
+            serializerFactory: (svp) => new JsonSerializer(Encoding.ASCII));
 
             //// Membership config
             //services.AddSingleton<IClusterMembership>(svp => new StaticClusterMemberlist(clusterId, new INode[] { }));
