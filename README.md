@@ -14,9 +14,8 @@ The strategic aim for SlimCluster is to implement other algorithms to make distr
 
 [![Gitter](https://badges.gitter.im/SlimCluster/community.svg)](https://gitter.im/SlimCluster/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 [![GitHub license](https://img.shields.io/github/license/zarusz/SlimCluster)](https://github.com/zarusz/SlimCluster/blob/master/LICENSE)
-[![Build status](https://ci.appveyor.com/api/projects/status/6ppr19du717spq3s/branch/master?svg=true&passingText=master%20OK&pendingText=master%20pending&failingText=master%20failL)](https://ci.appveyor.com/project/zarusz/slimcluster/branch/master)
-[![Build status](https://ci.appveyor.com/api/projects/status/6ppr19du717spq3s/branch/develop?svg=true&passingText=develop%20OK&pendingText=develop%20pending&failingText=develop%20fail)](https://ci.appveyor.com/project/zarusz/slimcluster/branch/develop)
-[![Build status](https://ci.appveyor.com/api/projects/status/6ppr19du717spq3s?svg=true&passingText=other%20OK&pendingText=other%20pending&failingText=other%20fail)](https://ci.appveyor.com/project/zarusz/slimcluster)
+[![Build status](https://ci.appveyor.com/api/projects/status/rx5hdn71qbgonvp5/branch/master?svg=true&passingText=master%20OK&pendingText=master%20pending&failingText=master%20failL)](https://ci.appveyor.com/project/zarusz/slimcluster/branch/master)
+[![Build status](https://ci.appveyor.com/api/projects/status/rx5hdn71qbgonvp5?svg=true&passingText=other%20OK&pendingText=other%20pending&failingText=other%20fail)](https://ci.appveyor.com/project/zarusz/slimcluster)
 
 ## Roadmap
 
@@ -24,7 +23,7 @@ The strategic aim for SlimCluster is to implement other algorithms to make distr
 
 The path to a stable production release:
 
-* Step 1: Implement the SWIM membership over UDP + sample (70% complete).
+* Step 1: Implement the SWIM membership over UDP + sample (80% complete).
 * Step 2: Documentation.
 * Step 3: Implement the Raft over TCP/UDP + sample.
 * Step 4: Documentation.
@@ -32,15 +31,14 @@ The path to a stable production release:
 
 ## Packages
 
-| Name                                          | Description                                          | NuGet                                                                                                                              |
-| --------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `SlimCluster`                                 | The core cluster interfaces                          | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft) |
-| `SlimCluster.Strategy.Raft`                   | The Raft algorithm implementation                    | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft) |
-| `SlimCluster.Strategy.Raft.Transport.Tcp`     | Raft RPC implemented with TCP                        | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft) |
-| `SlimCluster.Strategy.Raft.Transport.Redis`   | Raft RPC implemented with Redis Pub/Sub              | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft) |
-| `SlimCluster.Membership`                      | The membership core interfaces                       | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft) |
-| `SlimCluster.Membership.Swim.Transport.Udp`   | The SWIM membership algorithm implementation         | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft) |
-| `SlimCluster.Membership.Swim.Transport.Redis` | The membership implementation based on Redis Pub/Sub | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Strategy.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Strategy.Raft) |
+| Name                             | Description                                         | NuGet                                                                                                                                        |
+| -------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SlimCluster`                    | The core cluster interfaces                         | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.svg)](https://www.nuget.org/packages/SlimCluster)                                       |
+| `SlimCluster.Membership`         | The membership core interfaces                      | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Membership.svg)](https://www.nuget.org/packages/SlimCluster.Membership)                 |
+| `SlimCluster.Membership.Swim`    | The SWIM membership algorithm implementation on UDP | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Membership.Swim.svg)](https://www.nuget.org/packages/SlimCluster.Membership.Swim)       |
+| `SlimCluster.Concensus.Raft`     | Raft RPC implemented with TCP                       | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Concensus.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Concensus.Raft)         |
+| `SlimCluster.Serialization`      | The core serialization interfaces                   | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.svg)](https://www.nuget.org/packages/SlimCluster.Serialization)           |
+| `SlimCluster.Serialization.Json` | JSON serialization plugin                           | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.Json.svg)](https://www.nuget.org/packages/SlimCluster.Serialization.Json) |
 
 ## Samples
 
@@ -55,10 +53,15 @@ Setup membership discovery using the SWIM algorithm:
 IServicesCollection services;
 
 // We are setting up the SWIM membership algorithm for your micro-service instances
-services.AddClusterMembership(opts => {
-    opts.ClusterId = "MyMicroserviceCluster";
-});
-
+services.AddClusterMembership(opts =>
+    {
+        opts.Port = options.UdpPort;
+        opts.MulticastGroupAddress = options.UdpMulticastGroupAddress;
+        opts.ClusterId = "MyMicroserviceCluster";
+        opts.MembershipEventPiggybackCount = 2;
+    },
+    serializerFactory: (svp) => new JsonSerializer(Encoding.ASCII)
+);
 ```
 
 Then somewhere in the micro-service, you can inject the `IClusterMembership`:
