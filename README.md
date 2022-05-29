@@ -31,14 +31,15 @@ The path to a stable production release:
 
 ## Packages
 
-| Name                             | Description                                         | NuGet                                                                                                                                        |
-| -------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SlimCluster`                    | The core cluster interfaces                         | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.svg)](https://www.nuget.org/packages/SlimCluster)                                       |
-| `SlimCluster.Membership`         | The membership core interfaces                      | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Membership.svg)](https://www.nuget.org/packages/SlimCluster.Membership)                 |
-| `SlimCluster.Membership.Swim`    | The SWIM membership algorithm implementation on UDP | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Membership.Swim.svg)](https://www.nuget.org/packages/SlimCluster.Membership.Swim)       |
-| `SlimCluster.Concensus.Raft`     | Raft RPC implemented with TCP                       | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Concensus.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Concensus.Raft)         |
-| `SlimCluster.Serialization`      | The core serialization interfaces                   | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.svg)](https://www.nuget.org/packages/SlimCluster.Serialization)           |
-| `SlimCluster.Serialization.Json` | JSON serialization plugin                           | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.Json.svg)](https://www.nuget.org/packages/SlimCluster.Serialization.Json) |
+| Name                             | Description                                           | NuGet                                                                                                                                        |
+| -------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SlimCluster`                    | The core cluster interfaces                           | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.svg)](https://www.nuget.org/packages/SlimCluster)                                       |
+| `SlimCluster.Membership`         | The membership core interfaces                        | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Membership.svg)](https://www.nuget.org/packages/SlimCluster.Membership)                 |
+| `SlimCluster.Membership.Swim`    | The SWIM membership algorithm implementation over UDP | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Membership.Swim.svg)](https://www.nuget.org/packages/SlimCluster.Membership.Swim)       |
+| `SlimCluster.Concensus`          | The concensus protocol core interfaces                | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Concensus.svg)](https://www.nuget.org/packages/SlimCluster.Concensus)                   |
+| `SlimCluster.Concensus.Raft`     | Raft RPC implemented over TCP                         | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Concensus.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Concensus.Raft)         |
+| `SlimCluster.Serialization`      | The core serialization interfaces                     | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.svg)](https://www.nuget.org/packages/SlimCluster.Serialization)           |
+| `SlimCluster.Serialization.Json` | JSON serialization plugin                             | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.Json.svg)](https://www.nuget.org/packages/SlimCluster.Serialization.Json) |
 
 ## Samples
 
@@ -55,13 +56,15 @@ IServicesCollection services;
 // We are setting up the SWIM membership algorithm for your micro-service instances
 services.AddClusterMembership(opts =>
     {
-        opts.Port = options.UdpPort;
-        opts.MulticastGroupAddress = options.UdpMulticastGroupAddress;
+        opts.Port = 60001;
+        opts.MulticastGroupAddress = "239.1.1.1";
         opts.ClusterId = "MyMicroserviceCluster";
         opts.MembershipEventPiggybackCount = 2;
     },
     serializerFactory: (svp) => new JsonSerializer(Encoding.ASCII)
 );
+
+// Requires packages: SlimCluster.Membership.Swim, SlimCluster.Serialization.Json
 ```
 
 Then somewhere in the micro-service, you can inject the `IClusterMembership`:
