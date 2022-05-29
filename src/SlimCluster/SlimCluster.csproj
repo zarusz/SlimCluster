@@ -4,6 +4,8 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
+    <Description>Core interfaces for SlimCluster</Description>
+    <PackageTags>SlimCluster Cluster</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
