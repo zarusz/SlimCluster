@@ -5,15 +5,17 @@
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using System.Net;
     using System.Threading;
     using System.Threading.Tasks;
 
-    public class SwimProtocolPeriodLoop : IAsyncDisposable
+    public class SwimFailureDetector : IAsyncDisposable
     {
-        private readonly ILogger<SwimProtocolPeriodLoop> logger;
+        private readonly ILogger<SwimFailureDetector> logger;
         private readonly SwimClusterMembershipOptions options;
         private readonly IClusterMessageSender messageSender;
         private readonly IReadOnlyList<SwimMember> otherMembers;
+        private readonly ITime time;
         private readonly Random random = new();
 
         /// <summary>
@@ -38,18 +40,20 @@
 
         private bool timerMethodRunning;
 
-        public SwimProtocolPeriodLoop(
-            ILogger<SwimProtocolPeriodLoop> logger, 
-            SwimClusterMembershipOptions options, 
-            IClusterMessageSender messageSender, 
-            IReadOnlyList<SwimMember> otherMembers)
+        public SwimFailureDetector(
+            ILogger<SwimFailureDetector> logger,
+            SwimClusterMembershipOptions options,
+            IClusterMessageSender messageSender,
+            IReadOnlyList<SwimMember> otherMembers,
+            ITime time)
         {
             this.logger = logger;
             this.options = options;
             this.messageSender = messageSender;
             this.otherMembers = otherMembers;
-            AdvancePeriod(DateTimeOffset.Now);
-            periodTimer = new Timer(async (o) => await OnTimer(), null, 0, (int)options.PeriodTimerInterval.TotalMilliseconds);
+            this.time = time;
+            AdvancePeriod(time.Now);
+            periodTimer = new Timer((o) => _ = OnTimer(), null, 0, (int)options.PeriodTimerInterval.TotalMilliseconds);
         }
 
         public async ValueTask DisposeAsync()
@@ -88,7 +92,7 @@
 
         private async Task DoRun()
         {
-            var now = DateTimeOffset.Now;
+            var now = time.Now;
             if (now >= periodTimeout)
             {
                 // Start a new period
@@ -109,13 +113,15 @@
             periodTimeout = now.Add(options.ProtocolPeriod);
             Interlocked.Increment(ref periodSequenceNumber);
 
-            logger.LogDebug("Started period {PeriodSequenceNumber} and timeout on {PeriodTimeout}", PeriodSequenceNumber, periodTimeout);
+            logger.LogDebug("Started period {PeriodSequenceNumber} and timeout on {PeriodTimeout:s}", PeriodSequenceNumber, periodTimeout);
         }
+
+        protected IList<SwimMember> ActiveMembers => otherMembers.Where(x => x.Status == SwimMemberStatus.Active).ToList();
 
         private Task OnPingTimeout()
         {
             // get the active members only
-            var activeMembers = otherMembers.Where(x => x.Status == SwimMemberStatus.Active).ToList();
+            var activeMembers = ActiveMembers;
             if (activeMembers.Count == 0)
             {
                 // no active members
@@ -138,8 +144,7 @@
                 return Task.CompletedTask;
             }
 
-            var targetNodeAddress = pingNode.Address.EndPoint.Address.ToString();
-            var targetNodePort = pingNode.Address.EndPoint.Port;
+            var targetNodeAddress = pingNode.Address.ToString();
 
             Task SendPingReq(SwimMember member)
             {
@@ -148,8 +153,7 @@
                     PingReq = new PingReqMessage
                     {
                         PeriodSequenceNumber = PeriodSequenceNumber,
-                        TargetNodeAddress = targetNodeAddress,
-                        TargetNodePort = targetNodePort,
+                        NodeAddress = targetNodeAddress,
                     }
                 };
                 return messageSender.SendMessage(message, member.Address.EndPoint);
@@ -161,7 +165,7 @@
 
         private async Task OnNewPeriod()
         {
-            var now = DateTimeOffset.Now;
+            var now = time.Now;
 
             // Declare node that did not recieve an Ack for the Ping as Failed
             if (pingNode != null)
@@ -169,9 +173,9 @@
                 if (pingNode.Status == SwimMemberStatus.Confirming)
                 {
                     // When the node Ack did not arrive (via direct ping or via inderect ping-req) then declare this node as unhealty
-                    pingNode.OnSuspicious();
+                    pingNode.OnFaulted();
 
-                    logger.LogInformation("Node {NodeId} was declared as {NodeStatus} - ack message did not arrive in time for period {PeriodSequenceNumber}", pingNode.Id, pingNode.Status, PeriodSequenceNumber);
+                    logger.LogInformation("Node {NodeId} was declared as {NodeStatus} - ack message for ping (direct or indirect) did not arrive in time for period {PeriodSequenceNumber}", pingNode.Id, pingNode.Status, PeriodSequenceNumber);
                 }
             }
 
@@ -180,21 +184,22 @@
             await SelectMemberForPing(now);
         }
 
-        private async Task SelectMemberForPing(DateTimeOffset now)
+        private Task SelectMemberForPing(DateTimeOffset now)
         {
-            if (otherMembers.Count == 0)
+            var activeMembers = ActiveMembers;
+            if (activeMembers.Count == 0)
             {
                 // nothing to available to select
                 pingNode = null;
                 pingAckTimeout = null;
-                return;
+                return Task.CompletedTask;
             }
 
             // select random node for ping
-            var i = random.Next(otherMembers.Count);
+            var i = random.Next(activeMembers.Count);
 
             // store the selected node ID
-            pingNode = otherMembers[i];
+            pingNode = activeMembers[i];
             // expect an ack after the specified timeout
             pingAckTimeout = now.Add(options.PingAckTimeout);
 
@@ -209,7 +214,26 @@
                     PeriodSequenceNumber = periodSequenceNumber,
                 }
             };
-            await messageSender.SendMessage(message, pingNode.Address.EndPoint);
+            return messageSender.SendMessage(message, pingNode.Address.EndPoint);
+        }
+
+        public Task OnPingAckArrived(AckMessage m, IPEndPoint senderEndPoint)
+        {
+            var node = otherMembers.SingleOrDefault(x => x.Id == m.NodeId);
+            if (node != null)
+            {
+                if (PeriodSequenceNumber != m.PeriodSequenceNumber)
+                {
+                    logger.LogDebug("Ack arrived too late for the node {NodeId}, period {PeriodSequenceNumber}, while the Ack message was for period {AckPeriodSequenceNumber}", m.NodeId, PeriodSequenceNumber, m.PeriodSequenceNumber);
+                }
+                else
+                {
+                    logger.LogDebug("Ack arrived for the node {NodeId}, period {PeriodSequenceNumber}, node status {NodeStatus}", m.NodeId, PeriodSequenceNumber, node.Status);
+                    node.OnActive(time);
+                }
+            }
+
+            return Task.CompletedTask;
         }
     }
 }

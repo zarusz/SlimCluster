@@ -48,5 +48,20 @@
         /// The timer interval that is responsible for doing checks within a protocol period (T) - if Ping Timeouts occured. Implementation setting (not SWIM related).
         /// </summary>
         public TimeSpan PeriodTimerInterval { get; set; } = TimeSpan.FromSeconds(1);
+
+        /// <summary>
+        /// Welcome message options. Welcome messages are sent to newly joined members from the perspective of this node.
+        /// </summary>
+        public WelecomeMessageOptions WelcomeMessage { get; set; } = new WelecomeMessageOptions();
+
+        /// <summary>
+        /// Count of the local buffer of membership events for this node.
+        /// </summary>
+        public int MembershipEventBufferCount { get; set; } = 20;
+
+        /// <summary>
+        /// Count of the number of events that are piggybacked for a single Ping or Ack message.
+        /// </summary>
+        public int MembershipEventPiggybackCount { get; set; } = 3;
     }
 }

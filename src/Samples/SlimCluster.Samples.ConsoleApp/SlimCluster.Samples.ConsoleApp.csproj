@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\SlimCluster.Membership.Swim\SlimCluster.Membership.Swim.csproj" />
+    <ProjectReference Include="..\..\SlimCluster.Serialization.Json\SlimCluster.Serialization.Json.csproj" />
     <ProjectReference Include="..\..\SlimCluster.Strategy.Raft\SlimCluster.Strategy.Raft.csproj" />
   </ItemGroup>
 
