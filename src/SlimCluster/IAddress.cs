@@ -1,6 +1,5 @@
-﻿namespace SlimCluster
+﻿namespace SlimCluster;
+
+public interface IAddress
 {
-    public interface IAddress
-    {
-    }
 }

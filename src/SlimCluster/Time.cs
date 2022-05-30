@@ -1,9 +1,6 @@
-﻿using System;
+﻿namespace SlimCluster;
 
-namespace SlimCluster
+public class Time : ITime
 {
-    public class Time : ITime
-    {
-        public DateTimeOffset Now => DateTimeOffset.UtcNow;
-    }
+    public DateTimeOffset Now => DateTimeOffset.UtcNow;
 }

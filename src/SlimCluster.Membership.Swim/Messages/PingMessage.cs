@@ -1,7 +1,6 @@
-﻿namespace SlimCluster.Membership.Swim.Messages
+﻿namespace SlimCluster.Membership.Swim.Messages;
+
+public class PingMessage : IHasPeriodSequenceNumber
 {
-    public class PingMessage : IHasPeriodSequenceNumber
-    {
-        public long PeriodSequenceNumber { get; set; }
-    }
+    public long PeriodSequenceNumber { get; set; }
 }

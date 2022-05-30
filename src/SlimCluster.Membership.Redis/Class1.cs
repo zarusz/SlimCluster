@@ -1,8 +1,5 @@
-﻿namespace SlimCluster.Membership.Redis
-{
-    using System;
+﻿namespace SlimCluster.Membership.Redis;
 
-    public class Class1
-    {
-    }
+public class Class1
+{
 }

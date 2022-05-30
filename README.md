@@ -14,8 +14,7 @@ The strategic aim for SlimCluster is to implement other algorithms to make distr
 
 [![Gitter](https://badges.gitter.im/SlimCluster/community.svg)](https://gitter.im/SlimCluster/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 [![GitHub license](https://img.shields.io/github/license/zarusz/SlimCluster)](https://github.com/zarusz/SlimCluster/blob/master/LICENSE)
-[![Build status](https://ci.appveyor.com/api/projects/status/rx5hdn71qbgonvp5/branch/master?svg=true&passingText=master%20OK&pendingText=master%20pending&failingText=master%20failL)](https://ci.appveyor.com/project/zarusz/slimcluster/branch/master)
-[![Build status](https://ci.appveyor.com/api/projects/status/rx5hdn71qbgonvp5?svg=true&passingText=other%20OK&pendingText=other%20pending&failingText=other%20fail)](https://ci.appveyor.com/project/zarusz/slimcluster)
+[![Build](https://github.com/zarusz/SlimCluster/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/zarusz/SlimCluster/actions/workflows/build.yml)
 
 ## Roadmap
 

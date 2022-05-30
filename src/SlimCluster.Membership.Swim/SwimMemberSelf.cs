@@ -1,30 +1,26 @@
-﻿namespace SlimCluster.Membership.Swim
+﻿namespace SlimCluster.Membership.Swim;
+
+public class SwimMemberSelf : SwimMember
 {
-    using Microsoft.Extensions.Logging;
-    using System.Net;
+    private readonly ILogger<SwimMemberSelf> _logger;
 
-    public class SwimMemberSelf : SwimMember
+    public SwimMemberSelf(string id, IPEndPointAddress address, ITime time, ILoggerFactory loggerFactory)
+        : base(id, address, time.Now, SwimMemberStatus.Active, notifyStatusChanged: null, loggerFactory.CreateLogger<SwimMember>())
     {
-        private ILogger<SwimMemberSelf> logger;
+        _logger = loggerFactory.CreateLogger<SwimMemberSelf>();
+    }
 
-        public SwimMemberSelf(string id, IPEndPointAddress address, ITime time, ILoggerFactory loggerFactory)
-            : base(id, address, time.Now, SwimMemberStatus.Active, notifyStatusChanged: null, loggerFactory.CreateLogger<SwimMember>())
+    public bool OnObservedAddress(IPEndPoint endpoint)
+    {
+        if (!endpoint.Equals(Address.EndPoint))
         {
-            this.logger = loggerFactory.CreateLogger<SwimMemberSelf>();
+            // Record the observed external IP address for self
+            Address = new IPEndPointAddress(endpoint);
+
+            _logger.LogInformation("Updated observed address of self to {NodeEndPoint}", Address);
+
+            return true;
         }
-
-        public bool OnObservedAddress(IPEndPoint endpoint)
-        {
-            if (!endpoint.Equals(Address.EndPoint))
-            {
-                // Record the observed external IP address for self
-                Address = new IPEndPointAddress(endpoint);
-
-                logger.LogInformation("Updated observed address of self to {NodeEndPoint}", Address);
-
-                return true;
-            }
-            return false;
-        }
+        return false;
     }
 }

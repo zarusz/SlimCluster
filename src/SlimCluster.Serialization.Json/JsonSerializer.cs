@@ -1,39 +1,37 @@
-﻿namespace SlimCluster.Serialization.Json
+﻿namespace SlimCluster.Serialization.Json;
+
+using Newtonsoft.Json;
+using SlimCluster.Serialization;
+using System.Text;
+
+public class JsonSerializer : ISerializer
 {
-    using Newtonsoft.Json;
-    using SlimCluster.Serialization;
-    using System;
-    using System.Text;
+    private readonly Encoding _encoding;
+    private readonly JsonSerializerSettings _settings;
 
-    public class JsonSerializer : ISerializer
+    public JsonSerializer(Encoding encoding)
     {
-        private readonly Encoding encoding;
-        private readonly JsonSerializerSettings settings;
-
-        public JsonSerializer(Encoding encoding)
+        _encoding = encoding;
+        _settings = new JsonSerializerSettings
         {
-            this.encoding = encoding;
-            settings = new JsonSerializerSettings
-            {
-                DateTimeZoneHandling = DateTimeZoneHandling.Utc
-            };
-        }
+            DateTimeZoneHandling = DateTimeZoneHandling.Utc
+        };
+    }
 
-        public JsonSerializer() : this(Encoding.ASCII)
-        {
-        }
+    public JsonSerializer() : this(Encoding.ASCII)
+    {
+    }
 
-        public T Deserialize<T>(byte[] paylad) where T : class
-        {
-            var json = encoding.GetString(paylad);
-            return JsonConvert.DeserializeObject<T>(json, settings)
-                ?? throw new ArgumentNullException(nameof(json));
-        }
+    public T Deserialize<T>(byte[] paylad) where T : class
+    {
+        var json = _encoding.GetString(paylad);
+        return JsonConvert.DeserializeObject<T>(json, _settings)
+            ?? throw new ArgumentNullException(nameof(json));
+    }
 
-        public byte[] Serialize<T>(T msg) where T : class
-        {
-            var json = JsonConvert.SerializeObject(msg, settings);
-            return encoding.GetBytes(json);
-        }
+    public byte[] Serialize<T>(T msg) where T : class
+    {
+        var json = JsonConvert.SerializeObject(msg, _settings);
+        return _encoding.GetBytes(json);
     }
 }

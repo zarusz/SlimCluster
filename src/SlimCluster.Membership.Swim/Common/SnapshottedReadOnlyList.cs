@@ -1,33 +1,30 @@
-﻿namespace SlimCluster.Membership.Swim
+﻿namespace SlimCluster.Membership.Swim;
+
+using System.Collections;
+
+public class SnapshottedReadOnlyList<T> : IReadOnlyList<T>
 {
-    using System;
-    using System.Collections;
-    using System.Collections.Generic;
+    private readonly object _listLock = new();
+    private readonly List<T> _list = new();
+    private IReadOnlyList<T> _readOnlyList;
 
-    public class SnapshottedReadOnlyList<T> : IReadOnlyList<T>
+    public event Action<SnapshottedReadOnlyList<T>>? Changed;
+
+    public IEnumerator<T> GetEnumerator() => _readOnlyList.GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => _readOnlyList.GetEnumerator();
+    public int Count => _readOnlyList.Count;
+    public T this[int index] => _readOnlyList[index];
+
+    public SnapshottedReadOnlyList() => _readOnlyList = _list.AsReadOnly();
+
+    public void Mutate(Action<List<T>> action)
     {
-        private readonly object listLock = new();
-        private readonly List<T> list = new();
-        private IReadOnlyList<T> readOnlyList;
-
-        public event Action<SnapshottedReadOnlyList<T>>? Changed;
-
-        public IEnumerator<T> GetEnumerator() => readOnlyList.GetEnumerator();
-        IEnumerator IEnumerable.GetEnumerator() => readOnlyList.GetEnumerator();
-        public int Count => readOnlyList.Count;
-        public T this[int index] => readOnlyList[index];
-
-        public SnapshottedReadOnlyList() => readOnlyList = list.AsReadOnly();
-
-        public void Mutate(Action<List<T>> action)
+        lock (_listLock)
         {
-            lock (listLock)
-            {
-                action(list);
-                readOnlyList = list.AsReadOnly();
-            }
-
-            Changed?.Invoke(this);
+            action(_list);
+            _readOnlyList = _list.AsReadOnly();
         }
+
+        Changed?.Invoke(this);
     }
 }

@@ -1,11 +1,8 @@
-﻿namespace SlimCluster.Membership
-{
-    using System;
+﻿namespace SlimCluster.Membership;
 
-    public interface IMember
-    {
-        INode Node { get; }
-        DateTimeOffset Joined { get; }
-        DateTimeOffset LastSeen { get; }
-    }
+public interface IMember
+{
+    INode Node { get; }
+    DateTimeOffset Joined { get; }
+    DateTimeOffset LastSeen { get; }
 }

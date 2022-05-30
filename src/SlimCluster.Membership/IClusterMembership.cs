@@ -1,38 +1,46 @@
-﻿namespace SlimCluster.Membership
+﻿namespace SlimCluster.Membership;
+
+public interface IClusterMembership
 {
-    using System.Collections.Generic;
-    using System.Threading.Tasks;
+    /// <summary>
+    /// Represents the logical cluster id this membership represents.
+    /// </summary>
+    string ClusterId { get; }
 
-    public interface IClusterMembership
-    {
-        /// <summary>
-        /// Represents the logical cluster id this membership represents.
-        /// </summary>
-        string ClusterId { get; }
+    /// <summary>
+    /// Gets the current members snapshot.
+    /// </summary>
+    IReadOnlyCollection<IMember> Members { get; }
 
-        /// <summary>
-        /// Gets the current members snapshot
-        /// </summary>
-        IReadOnlyCollection<IMember> Members { get; }
+    /// <summary>
+    /// Gets the current members snapshot excluding self.
+    /// </summary>
+    IReadOnlyCollection<IMember> OtherMembers { get; }
 
-        event MemberJoinedEventHandler? MemberJoined;
-        event MemberLeftEventHandler? MemberLeft;
-        event MemberStatusChangedEventHandler? MemberStatusChanged;
+    /// <summary>
+    /// Gets the members representing this node.
+    /// </summary>
+    IMember SelfMember { get; }
 
-        public delegate void MemberJoinedEventHandler(object sender, MemberEventArgs e);
-        public delegate void MemberLeftEventHandler(object sender, MemberEventArgs e);
-        public delegate void MemberStatusChangedEventHandler(object sender, MemberEventArgs e);
+    event MemberJoinedEventHandler? MemberJoined;
+    event MemberLeftEventHandler? MemberLeft;
+    event MemberChangedEventHandler? MemberChanged;
+    event MemberStatusChangedEventHandler? MemberStatusChanged;
 
-        /// <summary>
-        /// Start the membership (the node will attempt to join).
-        /// </summary>
-        /// <returns></returns>
-        Task Start();
+    public delegate void MemberJoinedEventHandler(object sender, MemberEventArgs e);
+    public delegate void MemberLeftEventHandler(object sender, MemberEventArgs e);
+    public delegate void MemberChangedEventHandler(object sender, MemberEventArgs e);
+    public delegate void MemberStatusChangedEventHandler(object sender, MemberEventArgs e);
 
-        /// <summary>
-        /// Stop the membership (the node will leave).
-        /// </summary>
-        /// <returns></returns>
-        Task Stop();
-    }
+    /// <summary>
+    /// Start the membership (the node will attempt to join).
+    /// </summary>
+    /// <returns></returns>
+    Task Start();
+
+    /// <summary>
+    /// Stop the membership (the node will leave).
+    /// </summary>
+    /// <returns></returns>
+    Task Stop();
 }

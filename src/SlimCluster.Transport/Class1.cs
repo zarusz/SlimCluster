@@ -1,8 +1,5 @@
-﻿using System;
+﻿namespace SlimCluster.Transport;
 
-namespace SlimCluster.Transport
+public class Class1
 {
-    public class Class1
-    {
-    }
 }

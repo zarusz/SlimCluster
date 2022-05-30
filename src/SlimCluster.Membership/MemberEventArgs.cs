@@ -1,17 +1,14 @@
-﻿namespace SlimCluster.Membership
+﻿namespace SlimCluster.Membership;
+
+public class MemberEventArgs : EventArgs
 {
-    using System;
+    public INode Node { get; }
 
-    public class MemberEventArgs : EventArgs
+    public DateTimeOffset Timestamp { get; }
+
+    public MemberEventArgs(INode node, DateTimeOffset timestamp)
     {
-        public INode Node { get; }
-
-        public DateTimeOffset Timestamp { get; }
-
-        public MemberEventArgs(INode node, DateTimeOffset timestamp)
-        {
-            Node = node;
-            Timestamp = timestamp;
-        }
+        Node = node;
+        Timestamp = timestamp;
     }
 }

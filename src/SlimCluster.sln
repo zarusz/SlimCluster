@@ -36,9 +36,11 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.Membership.Redi
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.Membership.Swim", "SlimCluster.Membership.Swim\SlimCluster.Membership.Swim.csproj", "{2CAB6CF6-7385-4273-824C-18AB6B2C6914}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimCluster.Serialization", "SlimCluster.Serialization\SlimCluster.Serialization.csproj", "{6DB61183-D768-4073-B924-041DD23E4C1B}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.Serialization", "SlimCluster.Serialization\SlimCluster.Serialization.csproj", "{6DB61183-D768-4073-B924-041DD23E4C1B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimCluster.Serialization.Json", "SlimCluster.Serialization.Json\SlimCluster.Serialization.Json.csproj", "{A12FA19D-8EE1-4F3D-976F-CA1ED67C9BFB}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.Serialization.Json", "SlimCluster.Serialization.Json\SlimCluster.Serialization.Json.csproj", "{A12FA19D-8EE1-4F3D-976F-CA1ED67C9BFB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimCluster.Membership.Swim.Tests", "SlimCluster.Membership.Swim.Tests\SlimCluster.Membership.Swim.Tests.csproj", "{9BD1F18C-D10B-4BBF-8792-7F7569E2C97B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -86,6 +88,10 @@ Global
 		{A12FA19D-8EE1-4F3D-976F-CA1ED67C9BFB}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A12FA19D-8EE1-4F3D-976F-CA1ED67C9BFB}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A12FA19D-8EE1-4F3D-976F-CA1ED67C9BFB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9BD1F18C-D10B-4BBF-8792-7F7569E2C97B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9BD1F18C-D10B-4BBF-8792-7F7569E2C97B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9BD1F18C-D10B-4BBF-8792-7F7569E2C97B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9BD1F18C-D10B-4BBF-8792-7F7569E2C97B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
