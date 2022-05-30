@@ -1,14 +1,11 @@
-﻿namespace SlimCluster.Membership.Swim.Messages
+﻿namespace SlimCluster.Membership.Swim.Messages;
+
+public class NodeJoinedMessage : IHasNodeId
 {
-    using Newtonsoft.Json;
+    public string NodeId { get; set; } = string.Empty;
 
-    public class NodeJoinedMessage : IHasNodeId
+    public NodeJoinedMessage(string nodeId)
     {
-        public string NodeId { get; set; } = string.Empty;
-
-        public NodeJoinedMessage(string nodeId)
-        {
-            NodeId = nodeId;
-        }
+        NodeId = nodeId;
     }
 }

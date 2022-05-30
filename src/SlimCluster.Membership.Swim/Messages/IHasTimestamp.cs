@@ -1,13 +1,11 @@
-﻿namespace SlimCluster.Membership.Swim.Messages
-{
-    using Newtonsoft.Json;
-    using Newtonsoft.Json.Converters;
-    using System;
+﻿namespace SlimCluster.Membership.Swim.Messages;
 
-    public interface IHasTimestamp
-    {
-        [JsonProperty("ts")]
-        [JsonConverter(typeof(UnixDateTimeConverter))]
-        DateTimeOffset Timestamp { get; set; }
-    }
+using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
+
+public interface IHasTimestamp
+{
+    [JsonProperty("ts")]
+    [JsonConverter(typeof(UnixDateTimeConverter))]
+    DateTimeOffset Timestamp { get; set; }
 }

@@ -1,6 +1,5 @@
-﻿namespace SlimCluster
+﻿namespace SlimCluster;
+
+public interface INodeStatus : IStatus
 {
-    public interface INodeStatus : IStatus
-    {
-    }
 }

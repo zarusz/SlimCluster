@@ -1,93 +1,89 @@
-﻿namespace SlimCluster.Membership.Swim
+﻿namespace SlimCluster.Membership.Swim;
+
+public class SwimMember : IMember, INode
 {
-    using Microsoft.Extensions.Logging;
-    using System;
+    private readonly ILogger<SwimMember> _logger;
+    private readonly Action<SwimMember>? _notifyStatusChanged;
 
-    public class SwimMember : IMember, INode
+    public string Id { get; }
+    IAddress INode.Address => Address;
+    public INodeStatus Status => SwimStatus;
+
+    public SwimMemberStatus SwimStatus { get; protected set; }
+
+    /// <summary>
+    /// Point in time after which the Suspicious node will be declared as Confirm if no ACK is recieved.
+    /// </summary>
+    public DateTimeOffset? SuspiciousTimeout { get; set; }
+    public DateTimeOffset? LastPing { get; set; }
+
+    #region IMember
+
+    public INode Node => this;
+    public DateTimeOffset Joined { get; protected set; }
+    public DateTimeOffset LastSeen { get; protected set; }
+
+    #endregion
+
+    public IPEndPointAddress Address { get; protected set; }
+
+    public SwimMember(string id, IPEndPointAddress address, DateTimeOffset joined, SwimMemberStatus status, Action<SwimMember>? notifyStatusChanged, ILogger<SwimMember> logger)
     {
-        private readonly ILogger<SwimMember> logger;
-        private readonly Action<SwimMember>? notifyStatusChanged;
+        _logger = logger;
+        _notifyStatusChanged = notifyStatusChanged;
 
-        public string Id { get; }
-        IAddress INode.Address => Address;
-        public INodeStatus Status => SwimStatus;
+        Id = id;
+        Address = address;
+        SwimStatus = status;
+        Joined = joined;
+        LastSeen = joined;
+    }
 
-        public SwimMemberStatus SwimStatus { get; protected set; }
+    public override string ToString() => $"{Id}/({Address})";
 
-        /// <summary>
-        /// Point in time after which the Suspicious node will be declared as Confirm if no ACK is recieved.
-        /// </summary>
-        public DateTimeOffset? SuspiciousTimeout { get; set; }
-        public DateTimeOffset? LastPing { get; set; }
-
-        #region IMember
-
-        public INode Node => this;
-        public DateTimeOffset Joined { get; protected set; }
-        public DateTimeOffset LastSeen { get; protected set; }
-
-        #endregion
-
-        public IPEndPointAddress Address { get; protected set; }
-
-        public SwimMember(string id, IPEndPointAddress address, DateTimeOffset joined, SwimMemberStatus status, Action<SwimMember>? notifyStatusChanged, ILogger<SwimMember> logger)
+    public void OnActive(ITime time)
+    {
+        if (Status == SwimMemberStatus.Confirming || Status == SwimMemberStatus.Suspicious)
         {
-            this.logger = logger;
-            this.notifyStatusChanged = notifyStatusChanged;
+            SuspiciousTimeout = null;
 
-            Id = id;
-            Address = address;
-            SwimStatus = status;
-            Joined = joined;
-            LastSeen = joined;
+            LastSeen = time.Now;
+            ChangeStatusTo(SwimMemberStatus.Active);
         }
+    }
 
-        public override string ToString() => $"{Id}/({Address})";
+    private void ChangeStatusTo(SwimMemberStatus newStatus)
+    {
+        // When substantial transistion from active non-active or vice versa log with Info, otherwise Debug
+        var logLevel = newStatus.IsActive != SwimStatus.IsActive ? LogLevel.Information : LogLevel.Debug;
+        _logger.Log(logLevel, "Member {NodeId} changes status to {NodeStatus} (previous {PreviousNodeStatus})", Id, newStatus, Status);
+        SwimStatus = newStatus;
+        _notifyStatusChanged?.Invoke(this);
+    }
 
-        public void OnActive(ITime time)
+    public void OnConfirming(DateTimeOffset periodTimeout)
+    {
+        if (Status == SwimMemberStatus.Active || Status == SwimMemberStatus.Suspicious)
         {
-            if (Status == SwimMemberStatus.Confirming || Status == SwimMemberStatus.Suspicious)
-            {
-                SuspiciousTimeout = null;
+            SuspiciousTimeout = periodTimeout;
 
-                LastSeen = time.Now;
-                ChangeStatusTo(SwimMemberStatus.Active);
-            }
+            ChangeStatusTo(SwimMemberStatus.Confirming);
         }
+    }
 
-        private void ChangeStatusTo(SwimMemberStatus newStatus)
+    public void OnSuspicious()
+    {
+        if (Status == SwimMemberStatus.Confirming)
         {
-            // When substantial transistion from active non-active or vice versa log with Info, otherwise Debug
-            var logLevel = newStatus.IsActive != SwimStatus.IsActive ? LogLevel.Information : LogLevel.Debug;
-            logger.Log(logLevel, "Member {NodeId} changes status to {NodeStatus} (previous {PreviousNodeStatus})", Id, newStatus, Status);
-            SwimStatus = newStatus;
-            notifyStatusChanged?.Invoke(this);
+            ChangeStatusTo(SwimMemberStatus.Suspicious);
         }
+    }
 
-        public void OnConfirming(DateTimeOffset periodTimeout)
+    public void OnFaulted()
+    {
+        if (Status == SwimMemberStatus.Confirming)
         {
-            if (Status == SwimMemberStatus.Active || Status == SwimMemberStatus.Suspicious)
-            {
-                SuspiciousTimeout = periodTimeout;
-
-                ChangeStatusTo(SwimMemberStatus.Confirming);
-            }
-        }
-
-        public void OnSuspicious()
-        {
-            if (Status == SwimMemberStatus.Confirming)
-            {
-                ChangeStatusTo(SwimMemberStatus.Suspicious);
-            }
-        }
-
-        public void OnFaulted()
-        {
-            if (Status == SwimMemberStatus.Confirming)
-            {
-                ChangeStatusTo(SwimMemberStatus.Faulted);
-            }
+            ChangeStatusTo(SwimMemberStatus.Faulted);
         }
     }
 }

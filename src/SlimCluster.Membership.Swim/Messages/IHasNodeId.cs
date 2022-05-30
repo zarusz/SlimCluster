@@ -1,10 +1,9 @@
-﻿namespace SlimCluster.Membership.Swim.Messages
-{
-    using Newtonsoft.Json;
+﻿namespace SlimCluster.Membership.Swim.Messages;
 
-    public interface IHasNodeId
-    {
-        [JsonProperty("nid")]
-        string NodeId { get; set; }
-    }
+using Newtonsoft.Json;
+
+public interface IHasNodeId
+{
+    [JsonProperty("nid")]
+    string NodeId { get; set; }
 }

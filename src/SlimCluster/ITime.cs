@@ -1,9 +1,6 @@
-﻿using System;
+﻿namespace SlimCluster;
 
-namespace SlimCluster
+public interface ITime
 {
-    public interface ITime
-    {
-        DateTimeOffset Now { get; }
-    }
+    DateTimeOffset Now { get; }
 }

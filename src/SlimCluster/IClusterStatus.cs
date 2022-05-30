@@ -1,8 +1,7 @@
-﻿namespace SlimCluster
+﻿namespace SlimCluster;
+
+
+public interface IClusterStatus : IStatus
 {
 
-    public interface IClusterStatus : IStatus
-    {
-
-    }
 }

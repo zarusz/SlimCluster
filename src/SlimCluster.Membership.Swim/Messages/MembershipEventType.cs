@@ -1,9 +1,8 @@
-﻿namespace SlimCluster.Membership.Swim.Messages
+﻿namespace SlimCluster.Membership.Swim.Messages;
+
+public enum MembershipEventType
 {
-    public enum MembershipEventType
-    {
-        Joined = 1,
-        Left = 2,
-        Faulted = 3,
-    }
+    Joined = 1,
+    Left = 2,
+    Faulted = 3,
 }

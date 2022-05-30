@@ -1,12 +1,9 @@
-﻿namespace SlimCluster.Membership.Swim.Messages
-{
-    using Newtonsoft.Json;
+﻿namespace SlimCluster.Membership.Swim.Messages;
 
-    public class PingReqMessage : PingMessage, IHasNodeAddress
-    {
-        /// <summary>
-        /// Node address that sent this Ping
-        /// </summary>
-        public string NodeAddress { get; set; } = string.Empty;
-    }
+public class PingReqMessage : PingMessage, IHasNodeAddress
+{
+    /// <summary>
+    /// Node address that sent this Ping
+    /// </summary>
+    public string NodeAddress { get; set; } = string.Empty;
 }
