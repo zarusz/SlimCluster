@@ -1,7 +1,5 @@
 ﻿namespace SlimCluster.Membership.Swim;
 
-using System.Collections;
-
 public class SnapshottedReadOnlyList<T> : IReadOnlyList<T>
 {
     private readonly object _listLock = new();

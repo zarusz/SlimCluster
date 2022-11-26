@@ -1,5 +1,6 @@
 ﻿namespace SlimCluster.Membership.Swim;
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SlimCluster.Membership.Swim.Messages;
 using SlimCluster.Serialization;
@@ -7,7 +8,7 @@ using SlimCluster.Serialization;
 /// <summary>
 /// The SWIM algorithm implementation of <see cref="IClusterMembership"/> for maintaining membership.
 /// </summary>
-public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMessageSender, IMembershipEventListener
+public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMembershipEventListener
 {
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<SwimClusterMembership> _logger;
@@ -42,14 +43,19 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMess
     public event IClusterMembership.MemberChangedEventHandler? MemberChanged;
 
     /// <summary>
+    /// The messaging endpoint (duplex communication)
+    /// </summary>
+    private MessageEndpoint? _messageEndpoint;
+
+    /// <summary>
     /// The gossip component.
     /// </summary>
-    private SwimGossip? gossip;
+    private SwimGossip? _gossip;
 
     /// <summary>
     /// The protocol period loop (failure detection).
     /// </summary>
-    private SwimFailureDetector? failureDetector;
+    private SwimFailureDetector? _failureDetector;
 
     public SwimClusterMembership(ILoggerFactory loggerFactory, IOptions<SwimClusterMembershipOptions> options, ISerializer serializer, ITime time)
     {
@@ -66,50 +72,39 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMess
         _otherMembers.Changed += (list) => Members = new HashSet<IMember>(list) { _selfMember };
 
         Members = new HashSet<IMember>(_otherMembers) { _selfMember };
-
-        _multicastGroupAddress = IPAddress.Parse(_options.MulticastGroupAddress);
     }
 
-    private readonly object udpClientLock = new();
-    private UdpClient? udpClient;
-    private readonly IPAddress _multicastGroupAddress;
-
-    private bool isStarted = false;
-    private CancellationTokenSource? loopCts;
-
-    private Task? recieveLoopTask;
+    private bool _isStarted = false;
 
     public async Task Start()
     {
-        if (!isStarted)
+        if (!_isStarted)
         {
-            _logger.LogInformation("Cluster membership protocol (SWIM) starting...");
+            _logger.LogInformation("Cluster membership protocol (SWIM) starting for {NodeId}...", _selfMember.Id);
 
-            lock (udpClientLock)
-            {
-                //NetworkInterface.GetAllNetworkInterfaces()
-                //var ip = IPAddress.Parse("192.168.100.50");
-                //var ep = new IPEndPoint(ip, options.UdpPort);
-                //udpClient = new UdpClient(ep);
-                // Join or create a multicast group
-                udpClient = new UdpClient(_options.Port, _options.AddressFamily);
-                // See https://docs.microsoft.com/pl-pl/dotnet/api/system.net.sockets.udpclient.joinmulticastgroup?view=net-5.0
-                udpClient.JoinMulticastGroup(_multicastGroupAddress);
-            }
+            _gossip = new SwimGossip(
+                _loggerFactory.CreateLogger<SwimGossip>(),
+                _options,
+                this,
+                new MembershipEventBuffer(_options.MembershipEventBufferCount));
 
-            _logger.LogInformation("Node listening on {NodeEndPoint}", udpClient.Client.LocalEndPoint);
+            _messageEndpoint = new MessageEndpoint(
+                _loggerFactory.CreateLogger<MessageEndpoint>(),
+                _options,
+                _serializer,
+                (msg, endPoint) => _gossip?.OnMessageSending(msg),
+                OnMessageArrived);
 
-            loopCts = new CancellationTokenSource();
+            _failureDetector = new SwimFailureDetector(
+                _loggerFactory.CreateLogger<SwimFailureDetector>(),
+                _options,
+                _messageEndpoint,
+                _otherMembers,
+                _time);
 
-            // Run the message processing loop
-            recieveLoopTask = Task.Factory.StartNew(() => RecieveLoop(), TaskCreationOptions.LongRunning);
+            _isStarted = true;
 
-            gossip = new SwimGossip(_loggerFactory.CreateLogger<SwimGossip>(), _options, this, new MembershipEventBuffer(_options.MembershipEventBufferCount));
-            failureDetector = new SwimFailureDetector(_loggerFactory.CreateLogger<SwimFailureDetector>(), _options, this, _otherMembers, _time);
-
-            isStarted = true;
-
-            _logger.LogInformation("Cluster membership protocol (SWIM) started");
+            _logger.LogInformation("Cluster membership protocol (SWIM) started for {NodeId}", _selfMember.Id);
 
             await NotifySelfJoined();
         }
@@ -117,126 +112,62 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMess
 
     public async Task Stop()
     {
-        if (isStarted)
+        if (_isStarted)
         {
-            _logger.LogInformation("Cluster membership protocol (SWIM) stopping...");
-
-            loopCts?.Cancel();
-
-            if (failureDetector != null)
-            {
-                await failureDetector.DisposeAsync();
-                failureDetector = null;
-            }
-
-            if (recieveLoopTask != null)
-            {
-                try
-                {
-                    await recieveLoopTask;
-                }
-                catch
-                {
-                }
-                recieveLoopTask = null;
-            }
+            _logger.LogInformation("Cluster membership protocol (SWIM) stopping for {NodeId}...", _selfMember.Id);
 
             await NotifySelfLeft();
 
-            if (gossip != null)
+            if (_failureDetector != null)
             {
-                gossip = null;
+                await _failureDetector.DisposeAsync();
+                _failureDetector = null;
             }
 
-            // Stop multicast group
-            lock (udpClientLock)
+            if (_messageEndpoint != null)
             {
-                if (udpClient != null)
-                {
-                    udpClient.DropMulticastGroup(_multicastGroupAddress);
-                    udpClient.Dispose();
-                    udpClient = null;
-                }
+                await _messageEndpoint.DisposeAsync();
+                _messageEndpoint = null;
             }
 
-            if (loopCts != null)
+            if (_gossip != null)
             {
-                loopCts.Dispose();
-                loopCts = null;
+                _gossip = null;
             }
 
-            isStarted = false;
+            _isStarted = false;
 
-            _logger.LogInformation("Cluster membership protocol (SWIM) stopped");
+            _logger.LogInformation("Cluster membership protocol (SWIM) stopped for {NodeId}", _selfMember.Id);
         }
     }
 
     public async ValueTask DisposeAsync()
     {
         await Stop();
+        GC.SuppressFinalize(this);
     }
 
-    public Task SendMessage<T>(T message, IPEndPoint endPoint) where T : class
+    protected Task NotifySelfJoined()
     {
-        if (message is NodeMessage nodeMessage)
-        {
-            gossip?.OnMessageSending(nodeMessage);
-        }
+        // ToDo: Introduce an option to either use multicast or initial list of nodes seed
 
-        var payload = _serializer.Serialize(message);
-        _logger.LogTrace("Sending message to {NodeEndPoint}", endPoint);
-        return udpClient?.SendAsync(payload, payload.Length, endPoint) ?? Task.CompletedTask;
+        // Announce (multicast) to others that this node joined the network
+        return SendToMulticastGroup(new NodeMessage { NodeJoined = new NodeJoinedMessage(_selfMember.Id) }, nameof(NodeJoinedMessage));
     }
 
-    protected Task NotifySelfJoined() =>
-        // Announce (multicast) to others that this node joined the network
-        SendToMulticastGroup(new NodeMessage { NodeJoined = new NodeJoinedMessage(_selfMember.Id) }, nameof(NodeJoinedMessage));
+    protected Task NotifySelfLeft()
+    {
+        // ToDo: Improvement - send message about leaving to N randomly selected nodes.
 
-    protected Task NotifySelfLeft() =>
         // Announce (multicast) to others that this node left the network
-        SendToMulticastGroup(new NodeMessage { NodeLeft = new NodeLeftMessage(_selfMember.Id) }, nameof(NodeLeftMessage));
+        return SendToMulticastGroup(new NodeMessage { NodeLeft = new NodeLeftMessage(_selfMember.Id) }, nameof(NodeLeftMessage));
+    }
 
     private Task SendToMulticastGroup(NodeMessage message, string messageType)
     {
-        var endPoint = new IPEndPoint(_multicastGroupAddress, _options.Port);
+        var endPoint = new IPEndPoint(_messageEndpoint!.MulticastGroupAddress, _options.Port);
         _logger.LogInformation("Sending {MessageType} for node {NodeId} on the multicast group {MulticastEndPoint}", messageType, _selfMember.Id, endPoint);
-        return SendMessage(message, endPoint);
-    }
-
-    private async Task RecieveLoop()
-    {
-        _logger.LogInformation("Recieve loop started");
-        try
-        {
-            while (loopCts != null && !loopCts.IsCancellationRequested)
-            {
-                var result = await udpClient!.ReceiveAsync();
-                try
-                {
-                    var msg = _serializer.Deserialize<NodeMessage>(result.Buffer);
-                    if (msg != null)
-                    {
-                        await OnMessageArrived(msg, result.RemoteEndPoint);
-                    }
-                }
-                catch (Exception e)
-                {
-                    _logger.LogWarning(e, "Could not handle arriving message from remote endpoint {RemoteEndPoint}", result.RemoteEndPoint);
-                }
-            }
-        }
-        catch (ObjectDisposedException)
-        {
-            // Intended: this is how it exists from ReceiveAsync
-        }
-        catch (Exception e)
-        {
-            _logger.LogError(e, "Recieve loop error");
-        }
-        finally
-        {
-            _logger.LogInformation("Recieve loop finished");
-        }
+        return _messageEndpoint!.SendMessage(message, endPoint);
     }
 
     private async Task OnMessageArrived(NodeMessage msg, IPEndPoint remoteEndPoint)
@@ -272,9 +203,9 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMess
         }
 
         // process gossip events
-        if (gossip != null)
+        if (_gossip != null)
         {
-            await gossip.OnMessageArrived(msg);
+            await _gossip.OnMessageArrived(msg);
         }
     }
 
@@ -300,7 +231,7 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMess
                 if (addToEventBuffer)
                 {
                     // Notify the member joined
-                    gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Joined, _time.Now) { NodeAddress = member.Address.ToString() });
+                    _gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Joined, _time.Now) { NodeAddress = member.Address.ToString() });
                 }
 
                 if (_options.WelcomeMessage.IsEnabled)
@@ -347,7 +278,7 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMess
                 if (addToEventBuffer)
                 {
                     // Notify the member faulted
-                    gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Left, _time.Now));
+                    _gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Left, _time.Now));
                 }
 
                 _ = NotifyMemberLeft(member);
@@ -361,7 +292,7 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMess
         if (member.SwimStatus == SwimMemberStatus.Faulted)
         {
             // Notify the member faulted
-            gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Faulted, _time.Now));
+            _gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Faulted, _time.Now));
 
             _ = OnNodeLeft(member.Id);
         }
@@ -437,7 +368,7 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMess
 
         _logger.LogDebug("Sending Welcome to {NodeId} on {NodeEndPoint} with {NodeCount} known members (including self)", nodeId, endPoint, message.NodeWelcome.Nodes.Count + 1);
 
-        return SendMessage(message, endPoint);
+        return _messageEndpoint!.SendMessage(message, endPoint);
     }
 
     protected Task OnNodeWelcome(NodeWelcomeMessage m, IPEndPoint senderEndPoint)
@@ -492,7 +423,7 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMess
 
         _logger.LogDebug("Sending Ack with node {NodeId}, period sequence number {PeriodSequenceNumber} to remote {NodeEndPoint}", message.Ack.NodeId, message.Ack.PeriodSequenceNumber, senderEndPoint);
 
-        return SendMessage(message, senderEndPoint);
+        return _messageEndpoint!.SendMessage(message, senderEndPoint);
     }
 
     protected Task OnPingReq(PingReqMessage m, IPEndPoint senderEndPoint)
@@ -526,12 +457,12 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMess
 
         _logger.LogDebug("Sending indirect Ping with period sequence number {PeriodSequenceNumber} to remote {NodeEndPoint}", m.PeriodSequenceNumber, targetNodeEndpoint);
 
-        return SendMessage(message, targetNodeEndpoint);
+        return _messageEndpoint!.SendMessage(message, targetNodeEndpoint);
     }
 
     protected async Task OnPingAck(AckMessage m, IPEndPoint senderEndPoint)
     {
-        if (failureDetector == null)
+        if (_failureDetector == null)
         {
             // This is stopping (disposing).
             return;
@@ -554,6 +485,6 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMess
         }
 
         // Let the protocol period know that an Ack arrived
-        await failureDetector.OnPingAckArrived(m, senderEndPoint);
+        await _failureDetector.OnPingAckArrived(m, senderEndPoint);
     }
 }
