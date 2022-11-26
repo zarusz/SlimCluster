@@ -1,7 +1,7 @@
 # SlimCluster
 
 SlimCluster has the [Raft](https://raft.github.io/raft.pdf) distributed consensus algorithm implemented in .NET.
-Additionally, it implements the [SWIM](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf) cluster membership list (where nodes join and leaves/die).
+Additionally, it implements the [SWIM](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf) cluster membership list (where nodes join and leave/die).
 
 * Membership list is required to maintain what micro-service instances (nodes) constitute a cluster.
 * Raft consensus helps propagate state across the micro-service instances and ensures there is a designated leader instance performing the coordination of work.
@@ -22,7 +22,7 @@ The strategic aim for SlimCluster is to implement other algorithms to make distr
 
 The path to a stable production release:
 
-* Step 1: Implement the SWIM membership over UDP + sample (80% complete).
+* Step 1: Implement the SWIM membership over UDP + sample (90% complete).
 * Step 2: Documentation.
 * Step 3: Implement the Raft over TCP/UDP + sample.
 * Step 4: Documentation.
@@ -42,9 +42,9 @@ The path to a stable production release:
 
 ## Samples
 
-Check out the [Samples](src/Samples/) folder.
+Check out the [Samples](src/Samples/) folder on how to get started.
 
-## Example usage
+### Example usage
 
 Setup membership discovery using the SWIM algorithm:
 

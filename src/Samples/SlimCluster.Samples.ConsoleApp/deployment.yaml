@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: consoleapp
-        image: zarusz/sc-consoleapp:latest
+        image: zarusz/slimcluster_samples_consoleapp:latest
         imagePullPolicy: IfNotPresent # ensure we get always the fresh container image build
         ports:
         - containerPort: 60001

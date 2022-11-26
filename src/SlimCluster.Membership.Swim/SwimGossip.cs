@@ -30,7 +30,7 @@ public class SwimGossip
             {
                 foreach (var e in m.Events)
                 {
-                    _logger.LogDebug("Adding event to outgoing message about node {NodeId} ({NodeAddress}) of type {EventType}", e.NodeId, e.NodeAddress, e.Type);
+                    _logger.LogDebug("Adding event {EventType} to outgoing message about node {NodeId} ({NodeAddress})", e.Type, e.NodeId, e.NodeAddress);
                 }
             }
         }

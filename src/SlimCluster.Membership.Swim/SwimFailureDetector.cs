@@ -14,7 +14,7 @@ public class SwimFailureDetector : IAsyncDisposable
     /// <summary>
     /// The current protocol period sequence number.
     /// </summary>
-    private long periodSequenceNumber;
+    private long _periodSequenceNumber;
 
     /// <summary>
     /// The time that the current protocol period ends.
@@ -24,14 +24,14 @@ public class SwimFailureDetector : IAsyncDisposable
     /// <summary>
     /// Timer that performs the checks for the expected timeouts.
     /// </summary>
-    private Timer? periodTimer;
+    private Timer? _periodTimer;
 
     private SwimMember? pingNode;
     private DateTimeOffset? pingAckTimeout;
 
-    public long PeriodSequenceNumber => Interlocked.Read(ref periodSequenceNumber);
+    public long PeriodSequenceNumber => Interlocked.Read(ref _periodSequenceNumber);
 
-    private bool timerMethodRunning;
+    private bool _timerMethodRunning;
 
     public SwimFailureDetector(
         ILogger<SwimFailureDetector> logger,
@@ -46,29 +46,31 @@ public class SwimFailureDetector : IAsyncDisposable
         _otherMembers = otherMembers;
         _time = time;
         AdvancePeriod(time.Now);
-        periodTimer = new Timer((o) => _ = OnTimer(), null, 0, (int)options.PeriodTimerInterval.TotalMilliseconds);
+        _periodTimer = new Timer((o) => _ = OnTimer(), null, 0, (int)options.PeriodTimerInterval.TotalMilliseconds);
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (periodTimer != null)
+        if (_periodTimer != null)
         {
-            periodTimer.Change(Timeout.Infinite, Timeout.Infinite);
+            _periodTimer.Change(Timeout.Infinite, Timeout.Infinite);
 
-            await periodTimer.DisposeAsync();
-            periodTimer = null;
+            await _periodTimer.DisposeAsync();
+            _periodTimer = null;
         }
+
+        GC.SuppressFinalize(this);
     }
 
     public async Task OnTimer()
     {
-        if (timerMethodRunning)
+        if (_timerMethodRunning)
         {
             // another run is happening at the moment - prevent from rentering
             return;
         }
 
-        timerMethodRunning = true;
+        _timerMethodRunning = true;
         try
         {
             await DoRun();
@@ -79,7 +81,7 @@ public class SwimFailureDetector : IAsyncDisposable
         }
         finally
         {
-            timerMethodRunning = false;
+            _timerMethodRunning = false;
         }
     }
 
@@ -104,7 +106,7 @@ public class SwimFailureDetector : IAsyncDisposable
     private void AdvancePeriod(DateTimeOffset now)
     {
         periodTimeout = now.Add(_options.ProtocolPeriod);
-        Interlocked.Increment(ref periodSequenceNumber);
+        Interlocked.Increment(ref _periodSequenceNumber);
 
         _logger.LogDebug("Started period {PeriodSequenceNumber} and timeout on {PeriodTimeout:s}", PeriodSequenceNumber, periodTimeout);
     }
@@ -204,7 +206,7 @@ public class SwimFailureDetector : IAsyncDisposable
         {
             Ping = new PingMessage
             {
-                PeriodSequenceNumber = periodSequenceNumber,
+                PeriodSequenceNumber = _periodSequenceNumber,
             }
         };
         return _messageSender.SendMessage(message, pingNode.Address.EndPoint);

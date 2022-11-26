@@ -36,6 +36,7 @@ public class Program
             // Setup Swim Cluster Membership
             services.AddClusterMembership(opts =>
             {
+                opts.NodeId = Environment.MachineName; // this will use the machine name, in Kubernetes this will be the pod name
                 opts.Port = options.UdpPort;
                 opts.MulticastGroupAddress = options.UdpMulticastGroupAddress;
                 opts.ClusterId = "MyMicroserviceCluster";
