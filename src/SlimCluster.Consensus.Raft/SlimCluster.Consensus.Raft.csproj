@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="../Common.Properties.xml" />
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <Description>Raft consensus algorithm implementation for a distributed .NET service</Description>
+    <PackageTags>SlimCluster Cluster Consensus Raft</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SlimCluster.Membership\SlimCluster.Membership.csproj" />
+    <ProjectReference Include="..\SlimCluster\SlimCluster.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\icon.png">
+      <Pack>True</Pack>
+      <PackagePath></PackagePath>
+    </None>
+  </ItemGroup>
+
+</Project>

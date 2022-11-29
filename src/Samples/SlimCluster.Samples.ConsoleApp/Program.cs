@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 using SlimCluster.Membership;
 using SlimCluster.Membership.Swim;
 using SlimCluster.Serialization.Json;
-using SlimCluster.Strategy.Raft;
+using SlimCluster.Consensus.Raft;
 using System.Text;
 
 public class CommandLineOptions
