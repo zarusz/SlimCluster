@@ -10,14 +10,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="CommandLineParser" Version="2.8.0" />
+    <PackageReference Include="CommandLineParser" Version="2.9.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="7.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\SlimCluster.Membership.Swim\SlimCluster.Membership.Swim.csproj" />
     <ProjectReference Include="..\..\SlimCluster.Serialization.Json\SlimCluster.Serialization.Json.csproj" />
-    <ProjectReference Include="..\..\SlimCluster.Strategy.Raft\SlimCluster.Strategy.Raft.csproj" />
+    <ProjectReference Include="..\..\SlimCluster.Consensus.Raft\SlimCluster.Consensus.Raft.csproj" />
   </ItemGroup>
 
   <ItemGroup>

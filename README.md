@@ -22,11 +22,11 @@ The strategic aim for SlimCluster is to implement other algorithms to make distr
 
 The path to a stable production release:
 
-* Step 1: Implement the SWIM membership over UDP + sample (90% complete).
-* Step 2: Documentation.
-* Step 3: Implement the Raft over TCP/UDP + sample.
-* Step 4: Documentation.
-* Step 5: Other extensions and flavor (Redis Pub/Sub).
+* :white_check_mark: Step 1: Implement the SWIM membership over UDP + sample.
+* :white_large_square: Step 2: Documentation on SWIM membership.
+* :white_large_square: Step 3: Implement the Raft over TCP/UDP + sample.
+* :white_large_square: Step 4: Documentation on Raft consensus.
+* :white_large_square: Step 5: Other extensions and flavor.
 
 ## Packages
 
@@ -35,8 +35,8 @@ The path to a stable production release:
 | `SlimCluster`                    | The core cluster interfaces                           | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.svg)](https://www.nuget.org/packages/SlimCluster)                                       |
 | `SlimCluster.Membership`         | The membership core interfaces                        | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Membership.svg)](https://www.nuget.org/packages/SlimCluster.Membership)                 |
 | `SlimCluster.Membership.Swim`    | The SWIM membership algorithm implementation over UDP | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Membership.Swim.svg)](https://www.nuget.org/packages/SlimCluster.Membership.Swim)       |
-| `SlimCluster.Concensus`          | The concensus protocol core interfaces                | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Concensus.svg)](https://www.nuget.org/packages/SlimCluster.Concensus)                   |
-| `SlimCluster.Concensus.Raft`     | Raft RPC implemented over TCP                         | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Concensus.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Concensus.Raft)         |
+| `SlimCluster.Concensus`          | The consensus protocol core interfaces                | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Consensus.svg)](https://www.nuget.org/packages/SlimCluster.Consensus)                   |
+| `SlimCluster.Consensus.Raft`     | Raft RPC implemented over TCP                         | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Consensus.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Consensus.Raft)         |
 | `SlimCluster.Serialization`      | The core serialization interfaces                     | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.svg)](https://www.nuget.org/packages/SlimCluster.Serialization)           |
 | `SlimCluster.Serialization.Json` | JSON serialization plugin                             | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.Json.svg)](https://www.nuget.org/packages/SlimCluster.Serialization.Json) |
 

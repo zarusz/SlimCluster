@@ -12,8 +12,9 @@ $projects = @(
 	"SlimCluster",
 
 	"SlimCluster.Membership",
-
 	"SlimCluster.Membership.Swim", 
+
+	#"SlimCluster.Strategy.Raft", 
 
 	"SlimCluster.Serialization", 
 	"SlimCluster.Serialization.Json"
