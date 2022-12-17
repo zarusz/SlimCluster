@@ -19,26 +19,28 @@ public class SwimGossip
         _membershipEventBuffer = membershipEventBuffer;
     }
 
-    public void OnMessageSending(NodeMessage m)
+    public void OnMessageSending(SwimMessage message)
     {
-        if (m.Ping != null || m.Ack != null)
+        if (message is not IHasMembershipEvents m)
         {
-            // piggy back on ping and ack messages to send gossip events
-            m.Events = _membershipEventBuffer.GetNextEvents(_options.MembershipEventPiggybackCount);
+            return;
+        }
 
-            if (_logger.IsEnabled(LogLevel.Debug))
+        // piggy back on ping and ack messages to send gossip events
+        m.Events = _membershipEventBuffer.GetNextEvents(_options.MembershipEventPiggybackCount);
+
+        if (_logger.IsEnabled(LogLevel.Debug))
+        {
+            foreach (var e in m.Events)
             {
-                foreach (var e in m.Events)
-                {
-                    _logger.LogDebug("Adding event {EventType} to outgoing message about node {NodeId} ({NodeAddress})", e.Type, e.NodeId, e.NodeAddress);
-                }
+                _logger.LogDebug("Adding event {EventType} about member {NodeId}@{NodeAddress} to outgoing message", e.Type, e.NodeId, e.NodeAddress);
             }
         }
     }
 
-    public async Task OnMessageArrived(NodeMessage m)
+    public async Task OnMessageArrived(SwimMessage message, IAddress remoteAddress)
     {
-        if (m.Events == null)
+        if (message is not IHasMembershipEvents m || m.Events == null)
         {
             return;
         }
@@ -50,18 +52,20 @@ public class SwimGossip
             {
                 if (e.Type == MembershipEventType.Joined)
                 {
-                    _logger.LogDebug("Event arrived that node {NodeId} joined on address {NodeAddress}", e.NodeId, e.NodeAddress);
+                    _logger.LogDebug("Event arrived that member {NodeId}@{NodeAddress} joined", e.NodeId, e.NodeAddress);
 
                     if (e.NodeAddress == null)
                     {
-                        throw new ArgumentNullException($"{nameof(e.NodeAddress)} needs to be provided for event type {e.Type}");
+                        _logger.LogWarning("{FieldName} needs to be provided for event type {EventType}", nameof(e.NodeAddress), e.Type);
                     }
-                    var address = IPEndPointAddress.Parse(e.NodeAddress);
-                    await _membershipEventListener.OnNodeJoined(e.NodeId, address.EndPoint);
+                    else
+                    {
+                        await _membershipEventListener.OnNodeJoined(e.NodeId, remoteAddress.Parse(e.NodeAddress));
+                    }
                 }
                 if (e.Type == MembershipEventType.Left || e.Type == MembershipEventType.Faulted)
                 {
-                    _logger.LogDebug("Event arrived that node {NodeId} left/faulted", e.NodeId);
+                    _logger.LogDebug("Event arrived that member {NodeId} left/faulted", e.NodeId);
                     await _membershipEventListener.OnNodeLeft(e.NodeId);
                 }
             }

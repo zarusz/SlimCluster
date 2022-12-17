@@ -31,16 +31,4 @@ public interface IClusterMembership
     public delegate void MemberLeftEventHandler(object sender, MemberEventArgs e);
     public delegate void MemberChangedEventHandler(object sender, MemberEventArgs e);
     public delegate void MemberStatusChangedEventHandler(object sender, MemberEventArgs e);
-
-    /// <summary>
-    /// Start the membership (the node will attempt to join).
-    /// </summary>
-    /// <returns></returns>
-    Task Start();
-
-    /// <summary>
-    /// Stop the membership (the node will leave).
-    /// </summary>
-    /// <returns></returns>
-    Task Stop();
 }

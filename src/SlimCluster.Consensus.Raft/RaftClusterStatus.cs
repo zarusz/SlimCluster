@@ -1,8 +1,6 @@
 ﻿namespace SlimCluster.Consensus.Raft;
 
-using SlimCluster;
-
-public class RaftClusterStatus : AbstractStatus, IClusterStatus
+public class RaftClusterStatus : AbstractStatus<RaftClusterStatus>, IClusterStatus
 {
     protected RaftClusterStatus(Guid id, string name) : base(id, name)
     {

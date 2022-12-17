@@ -1,13 +1,16 @@
 ﻿namespace SlimCluster.Membership.Swim;
 
-public class SwimMember : IMember, INode
+public class SwimMember : AbstractNode, IMember, INode
 {
     private readonly ILogger<SwimMember> _logger;
     private readonly Action<SwimMember>? _notifyStatusChanged;
 
-    public string Id { get; }
-    IAddress INode.Address => Address;
-    public INodeStatus Status => SwimStatus;
+    #region INode
+
+    public override INodeStatus Status => SwimStatus;
+    public override IAddress Address { get; protected set; }
+
+    #endregion
 
     public SwimMemberStatus SwimStatus { get; protected set; }
 
@@ -25,21 +28,17 @@ public class SwimMember : IMember, INode
 
     #endregion
 
-    public IPEndPointAddress Address { get; protected set; }
-
-    public SwimMember(string id, IPEndPointAddress address, DateTimeOffset joined, SwimMemberStatus status, Action<SwimMember>? notifyStatusChanged, ILogger<SwimMember> logger)
+    public SwimMember(string id, IAddress address, DateTimeOffset joined, SwimMemberStatus status, Action<SwimMember>? notifyStatusChanged, ILogger<SwimMember> logger)
+        : base(id)
     {
         _logger = logger;
         _notifyStatusChanged = notifyStatusChanged;
 
-        Id = id;
         Address = address;
         SwimStatus = status;
         Joined = joined;
         LastSeen = joined;
     }
-
-    public override string ToString() => $"{Id}/({Address})";
 
     public void OnActive(ITime time)
     {
@@ -56,7 +55,7 @@ public class SwimMember : IMember, INode
     {
         // When substantial transistion from active non-active or vice versa log with Info, otherwise Debug
         var logLevel = newStatus.IsActive != SwimStatus.IsActive ? LogLevel.Information : LogLevel.Debug;
-        _logger.Log(logLevel, "Member {NodeId} changes status to {NodeStatus} (previous {PreviousNodeStatus})", Id, newStatus, Status);
+        _logger.Log(logLevel, "Member {NodeId} changes status to {NodeStatus} (from {NodeStatus})", Id, newStatus, Status);
         SwimStatus = newStatus;
         _notifyStatusChanged?.Invoke(this);
     }
@@ -85,5 +84,19 @@ public class SwimMember : IMember, INode
         {
             ChangeStatusTo(SwimMemberStatus.Faulted);
         }
+    }
+
+    public bool OnObservedAddress(IAddress address)
+    {
+        if (!Address.Equals(address))
+        {
+            // Record the observed external IP address for self
+            Address = address;
+
+            _logger.LogInformation("Updated member {NodeId} observed address to {NodeAddress}", Id, Address);
+
+            return true;
+        }
+        return false;
     }
 }

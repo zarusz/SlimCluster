@@ -1,6 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <Import Project="../Common.Properties.xml" />
+  <Import Project="../Common.NuGet.Properties.xml" />
 
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
@@ -11,12 +11,5 @@
   <ItemGroup>
     <ProjectReference Include="..\SlimCluster\SlimCluster.csproj" />
   </ItemGroup>
-
-  <ItemGroup>
-    <None Include="..\icon.png">
-      <Pack>True</Pack>
-      <PackagePath></PackagePath>
-    </None>
-  </ItemGroup>
-  
+ 
 </Project>

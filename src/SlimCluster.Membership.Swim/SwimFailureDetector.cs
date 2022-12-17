@@ -1,13 +1,15 @@
 ﻿namespace SlimCluster.Membership.Swim;
 
 using SlimCluster.Membership.Swim.Messages;
+using SlimCluster.Transport;
 
-public class SwimFailureDetector : IAsyncDisposable
+public class SwimFailureDetector
 {
     private readonly ILogger<SwimFailureDetector> _logger;
     private readonly SwimClusterMembershipOptions _options;
     private readonly IMessageSender _messageSender;
     private readonly IReadOnlyList<SwimMember> _otherMembers;
+    private readonly ICurrentNode _currentNode;
     private readonly ITime _time;
     private readonly Random _random = new();
 
@@ -21,86 +23,57 @@ public class SwimFailureDetector : IAsyncDisposable
     /// </summary>
     private DateTimeOffset periodTimeout;
 
-    /// <summary>
-    /// Timer that performs the checks for the expected timeouts.
-    /// </summary>
-    private Timer? _periodTimer;
-
     private SwimMember? pingNode;
     private DateTimeOffset? pingAckTimeout;
 
     public long PeriodSequenceNumber => Interlocked.Read(ref _periodSequenceNumber);
-
-    private bool _timerMethodRunning;
 
     public SwimFailureDetector(
         ILogger<SwimFailureDetector> logger,
         SwimClusterMembershipOptions options,
         IMessageSender messageSender,
         IReadOnlyList<SwimMember> otherMembers,
+        ICurrentNode currentNode,
         ITime time)
     {
         _logger = logger;
         _options = options;
         _messageSender = messageSender;
         _otherMembers = otherMembers;
+        _currentNode = currentNode;
         _time = time;
         AdvancePeriod(time.Now);
-        _periodTimer = new Timer((o) => _ = OnTimer(), null, 0, (int)options.PeriodTimerInterval.TotalMilliseconds);
     }
 
-    public async ValueTask DisposeAsync()
+    /// <summary>
+    /// Checks timers and triggers actions if it's time.
+    /// </summary>
+    /// <returns>True if was idle run</returns>
+    public async Task<bool> DoRun()
     {
-        if (_periodTimer != null)
-        {
-            _periodTimer.Change(Timeout.Infinite, Timeout.Infinite);
-
-            await _periodTimer.DisposeAsync();
-            _periodTimer = null;
-        }
-
-        GC.SuppressFinalize(this);
-    }
-
-    public async Task OnTimer()
-    {
-        if (_timerMethodRunning)
-        {
-            // another run is happening at the moment - prevent from rentering
-            return;
-        }
-
-        _timerMethodRunning = true;
         try
         {
-            await DoRun();
+            var now = _time.Now;
+
+            if (now >= periodTimeout)
+            {
+                // Start a new period
+                await OnNewPeriod();
+                return false;
+            }
+
+            if (pingAckTimeout != null && now >= pingAckTimeout.Value)
+            {
+                pingAckTimeout = null;
+                await OnPingTimeout();
+                return false;
+            }
         }
         catch (Exception e)
         {
             _logger.LogError(e, "Error occured at protocol period timer loop");
         }
-        finally
-        {
-            _timerMethodRunning = false;
-        }
-    }
-
-    private async Task DoRun()
-    {
-        var now = _time.Now;
-        if (now >= periodTimeout)
-        {
-            // Start a new period
-            await OnNewPeriod();
-        }
-        else
-        {
-            if (pingAckTimeout != null && now >= pingAckTimeout.Value)
-            {
-                pingAckTimeout = null;
-                await OnPingTimeout();
-            }
-        }
+        return true;
     }
 
     private void AdvancePeriod(DateTimeOffset now)
@@ -143,19 +116,16 @@ public class SwimFailureDetector : IAsyncDisposable
 
         Task SendPingReq(SwimMember member)
         {
-            var message = new NodeMessage
+            var message = new PingReqMessage(_currentNode.Id)
             {
-                PingReq = new PingReqMessage
-                {
-                    PeriodSequenceNumber = PeriodSequenceNumber,
-                    NodeAddress = targetNodeAddress,
-                }
+                NodeAddress = targetNodeAddress,
+                PeriodSequenceNumber = PeriodSequenceNumber
             };
-            return _messageSender.SendMessage(message, member.Address.EndPoint);
+            return _messageSender.SendMessage(message, member.Address);
         }
 
         // send the ping-req to them (in pararell)
-        return Task.WhenAll(selectedMembers.Select(m => SendPingReq(m)));
+        return Task.WhenAll(selectedMembers.Select(SendPingReq));
     }
 
     private async Task OnNewPeriod()
@@ -202,28 +172,25 @@ public class SwimFailureDetector : IAsyncDisposable
 
         _logger.LogDebug("Node {NodeId} was selected for failure detecton at period {PeriodSequenceNumber} - ping message will be sent", pingNode.Id, PeriodSequenceNumber);
 
-        var message = new NodeMessage
+        var message = new PingMessage(_currentNode.Id)
         {
-            Ping = new PingMessage
-            {
-                PeriodSequenceNumber = _periodSequenceNumber,
-            }
+            PeriodSequenceNumber = _periodSequenceNumber
         };
-        return _messageSender.SendMessage(message, pingNode.Address.EndPoint);
+        return _messageSender.SendMessage(message, pingNode.Address);
     }
 
-    public Task OnPingAckArrived(AckMessage m, IPEndPoint senderEndPoint)
+    public Task OnAckArrived(AckMessage m, IAddress senderAddress)
     {
         var node = _otherMembers.SingleOrDefault(x => x.Id == m.NodeId);
         if (node != null)
         {
             if (PeriodSequenceNumber != m.PeriodSequenceNumber)
             {
-                _logger.LogDebug("Ack arrived too late for the node {NodeId}, period {PeriodSequenceNumber}, while the Ack message was for period {AckPeriodSequenceNumber}", m.NodeId, PeriodSequenceNumber, m.PeriodSequenceNumber);
+                _logger.LogDebug("Ack arrived too late from the node {NodeId}, period {PeriodSequenceNumber}, while the Ack message was for period {AckPeriodSequenceNumber}", m.NodeId, PeriodSequenceNumber, m.PeriodSequenceNumber);
             }
             else
             {
-                _logger.LogDebug("Ack arrived for the node {NodeId}, period {PeriodSequenceNumber}, node status {NodeStatus}", m.NodeId, PeriodSequenceNumber, node.Status);
+                _logger.LogDebug("Ack arrived from the node {NodeId}, period {PeriodSequenceNumber}, node status {NodeStatus}", m.NodeId, PeriodSequenceNumber, node.Status);
                 node.OnActive(_time);
             }
         }

@@ -5,5 +5,4 @@
 /// </summary>
 public interface ICurrentNode : INode
 {
-    ICluster Cluster { get; }
 }

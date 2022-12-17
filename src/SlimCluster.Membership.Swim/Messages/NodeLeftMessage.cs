@@ -1,8 +1,10 @@
 ﻿namespace SlimCluster.Membership.Swim.Messages;
 
-public class NodeLeftMessage : IHasNodeId
+public class NodeLeftMessage : SwimMessage
 {
-    public string NodeId { get; set; } = string.Empty;
-
-    public NodeLeftMessage(string nodeId) => NodeId = nodeId;
+    protected NodeLeftMessage()
+    {
+    }
+    
+    public NodeLeftMessage(string fromNodeId) => FromNodeId = fromNodeId;
 }

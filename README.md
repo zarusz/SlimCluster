@@ -3,8 +3,8 @@
 SlimCluster has the [Raft](https://raft.github.io/raft.pdf) distributed consensus algorithm implemented in .NET.
 Additionally, it implements the [SWIM](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf) cluster membership list (where nodes join and leave/die).
 
-* Membership list is required to maintain what micro-service instances (nodes) constitute a cluster.
-* Raft consensus helps propagate state across the micro-service instances and ensures there is a designated leader instance performing the coordination of work.
+- Membership list is required to maintain what micro-service instances (nodes) constitute a cluster.
+- Raft consensus helps propagate state across the micro-service instances and ensures there is a designated leader instance performing the coordination of work.
 
 The library goal is to provide a common groundwork for coordination and consensus of your distributed micro-service instances.
 With that, the developer can focus on the business problem at hand.
@@ -22,23 +22,28 @@ The strategic aim for SlimCluster is to implement other algorithms to make distr
 
 The path to a stable production release:
 
-* :white_check_mark: Step 1: Implement the SWIM membership over UDP + sample.
-* :white_large_square: Step 2: Documentation on SWIM membership.
-* :white_large_square: Step 3: Implement the Raft over TCP/UDP + sample.
-* :white_large_square: Step 4: Documentation on Raft consensus.
-* :white_large_square: Step 5: Other extensions and flavor.
+- :white_check_mark: Step 1: Implement the SWIM membership over UDP + sample.
+- :white_large_square: Step 2: Documentation on SWIM membership.
+- :white_check_mark: Step 3: Implement the Raft over TCP/UDP + sample.
+- :white_large_square: Step 4: Documentation on Raft consensus.
+- :white_large_square: Step 5: Other extensions and flavor.
 
 ## Packages
 
-| Name                             | Description                                           | NuGet                                                                                                                                        |
-| -------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SlimCluster`                    | The core cluster interfaces                           | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.svg)](https://www.nuget.org/packages/SlimCluster)                                       |
-| `SlimCluster.Membership`         | The membership core interfaces                        | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Membership.svg)](https://www.nuget.org/packages/SlimCluster.Membership)                 |
-| `SlimCluster.Membership.Swim`    | The SWIM membership algorithm implementation over UDP | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Membership.Swim.svg)](https://www.nuget.org/packages/SlimCluster.Membership.Swim)       |
-| `SlimCluster.Concensus`          | The consensus protocol core interfaces                | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Consensus.svg)](https://www.nuget.org/packages/SlimCluster.Consensus)                   |
-| `SlimCluster.Consensus.Raft`     | Raft RPC implemented over TCP                         | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Consensus.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Consensus.Raft)         |
-| `SlimCluster.Serialization`      | The core serialization interfaces                     | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.svg)](https://www.nuget.org/packages/SlimCluster.Serialization)           |
-| `SlimCluster.Serialization.Json` | JSON serialization plugin                             | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.Json.svg)](https://www.nuget.org/packages/SlimCluster.Serialization.Json) |
+| Name                                | Description                                | NuGet                                                                                                                                              |
+| ----------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SlimCluster`                       | The core cluster interfaces                | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.svg)](https://www.nuget.org/packages/SlimCluster)                                             |
+| **Core abstractions**               |                                            |                                                                                                                                                    |
+| `SlimCluster.Membership`            | The membership core interfaces             | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Membership.svg)](https://www.nuget.org/packages/SlimCluster.Membership)                       |
+| `SlimCluster.Serialization`         | The core message serialization interfaces  | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.svg)](https://www.nuget.org/packages/SlimCluster.Serialization)                 |
+| `SlimCluster.Transport`             | The core transport interfaces              | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Transport.svg)](https://www.nuget.org/packages/SlimCluster.Transport)                         |
+| `SlimCluster.Persistence`           | The core node state persistence interfaces | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Persistence.svg)](https://www.nuget.org/packages/SlimCluster.Persistence)                     |
+| **Plugins**                         |                                            |                                                                                                                                                    |
+| `SlimCluster.Consensus.Raft`        | Raft consensus algorithm implementation    | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Consensus.Raft.svg)](https://www.nuget.org/packages/SlimCluster.Consensus.Raft)               |
+| `SlimCluster.Membership.Swim`       | SWIM membership algorithm implementation   | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Membership.Swim.svg)](https://www.nuget.org/packages/SlimCluster.Membership.Swim)             |
+| `SlimCluster.Serialization.Json`    | JSON message serialization plugin          | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.Json.svg)](https://www.nuget.org/packages/SlimCluster.Serialization.Json)       |
+| `SlimCluster.Transport.Ip`          | IP protocol transport plugin               | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Transport.Ip.svg)](https://www.nuget.org/packages/SlimCluster.Transport.Ip)                   |
+| `SlimCluster.Persistence.LocalFile` | Persists node state into a local JSON file | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Persistence.LocalFile.svg)](https://www.nuget.org/packages/SlimCluster.Persistence.LocalFile) |
 
 ## Samples
 
@@ -46,39 +51,90 @@ Check out the [Samples](src/Samples/) folder on how to get started.
 
 ### Example usage
 
-Setup membership discovery using the SWIM algorithm:
+Setup membership discovery using the SWIM algorithm and consensus using Raft algorithm:
 
 ```cs
-// Assuming you're using Microsoft.Extensions.DependencyInjection
-IServicesCollection services;
+services.AddSlimCluster(cfg =>
+{
+    cfg.ClusterId = "MyCluster";
+    // This will use the machine name, in Kubernetes this will be the pod name
+    cfg.NodeId = Environment.MachineName;
 
-// We are setting up the SWIM membership algorithm for your micro-service instances
-services.AddClusterMembership(opts =>
+    // Transport will be over UDP/IP
+    cfg.AddIpTransport(opts =>
     {
-        opts.Port = 60001;
-        opts.MulticastGroupAddress = "239.1.1.1";
-        opts.ClusterId = "MyMicroserviceCluster";
-        opts.MembershipEventPiggybackCount = 2;
-    },
-    serializerFactory: (svp) => new JsonSerializer(Encoding.ASCII)
-);
+        opts.Port = options.UdpPort;
+        opts.MulticastGroupAddress = options.UdpMulticastGroupAddress;
+    });
 
-// Requires packages: SlimCluster.Membership.Swim, SlimCluster.Serialization.Json
+    // Setup Swim Cluster Membership
+    cfg.AddSwimMembership(opts =>
+    {
+        opts.MembershipEventPiggybackCount = 2;
+    });
+
+    // Setup Raft Cluster Consensus
+    cfg.AddRaftConsensus(opts =>
+    {
+        opts.NodeCount = 3;
+    });
+
+    // Protocol messages will be serialized using JSON
+    cfg.AddJsonSerialization();
+
+    // Cluster state will saved into the local json file in between node restarts
+    cfg.AddPersistenceUsingLocalFile("cluster-state.json");
+});
+
+// Raft app specific implementation
+services.AddSingleton<ILogRepository, InMemoryLogRepository>();
+services.AddTransient<IStateMachine, AppStateMachine>();
+            
+// Requires packages: SlimCluster.Membership.Swim, SlimCluster.Consensus.Raft, SlimCluster.Serialization.Json, SlimCluster.Transport.Ip, SlimCluster.Persistence.LocalFile
 ```
 
-Then somewhere in the micro-service, you can inject the `IClusterMembership`:
+Then somewhere in the micro-service, the [`ICluster`](src/SlimCluster/ICluster.cs) can be used:
 
 ```cs
-// Injected, this will be a singleton
-IClusterMembership cluster;
+// Injected, this will be a singleton representing the cluster the service instances form.
+ICluster cluster;
 
-// Provides a snapshot collection of the current instances discovered and alive/healthy:
-cluster.Members 
+// Gives the current leader
+INode? leader = cluster.LeaderNode;
 
-// Allows to get notifications when an new instance joines or leaves (dies):
-cluster.MemberJoined += (sender, e) => { /* e.Node and e.Timestamp */ };
-cluster.MemberLeft += (sender, e) => { /* e.Node and e.Timestamp */ };
+// Gives the node representing current node
+INode self = cluster.SelfNode;
 
+// Provides a snapshot collection of the current nodes discovered and alive/healthy forming the cluster
+IEnumerable<INode> nodes = cluster.Nodes;
+
+// Provides a snapshot collection of the current nodes discovered and alive/healthy forming the cluster excluding self
+IEnumerable<INode> otherNodes = cluster.OtherNodes;
+```
+
+The [`IClusterMembership`](src/SlimCluster.Membership/IClusterMembership.cs) can be used to understand membership changes:
+
+```cs
+// Injected: IClusterMembership ClusterMembership
+ClusterMembership.MemberJoined += (target, e) =>
+{
+    Logger.LogInformation("The member {NodeId} joined", e.Node.Id);
+    PrintActiveMembers();
+};
+
+ClusterMembership.MemberLeft += (target, e) =>
+{
+    Logger.LogInformation("The member {NodeId} left/faulted", e.Node.Id);
+    PrintActiveMembers();
+};
+
+ClusterMembership.MemberStatusChanged += (target, e) =>
+{
+    if (e.Node.Status == SwimMemberStatus.Suspicious)
+    {
+        Logger.LogInformation("The node {NodeId} is suspicious. All active members are: {NodeList}", e.Node.Id, string.Join(", ", ClusterMembership.Members.Where(x => x.Node.Status == SwimMemberStatus.Active)));
+    }
+};
 ```
 
 ## License
@@ -100,11 +156,13 @@ NuGet packaged end up in `dist` folder
 To run tests you need to update the respective `appsettings.json` to match your cloud infrastructure or local infrastructure.
 
 Run all tests:
+
 ```cmd
 dotnet test
 ```
 
-Run all tests except  integration tests which require local/cloud infrastructure:
+Run all tests except integration tests which require local/cloud infrastructure:
+
 ```cmd
 dotnet test --filter Category!=Integration
 ```

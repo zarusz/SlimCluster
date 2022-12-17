@@ -1,6 +1,6 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <Import Project="../Common.Properties.xml" />
+  <Import Project="../Common.NuGet.Properties.xml" />
 
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
@@ -9,15 +9,20 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\SlimCluster.Host\SlimCluster.Host.csproj" />
     <ProjectReference Include="..\SlimCluster.Membership\SlimCluster.Membership.csproj" />
-    <ProjectReference Include="..\SlimCluster\SlimCluster.csproj" />
+    <ProjectReference Include="..\SlimCluster.Transport\SlimCluster.Transport.csproj" />
+    <ProjectReference Include="..\SlimCluster.Persistence\SlimCluster.Persistence.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\icon.png">
-      <Pack>True</Pack>
-      <PackagePath></PackagePath>
-    </None>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>SlimCluster.Consensus.Raft.Test</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
 </Project>
