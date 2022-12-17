@@ -18,11 +18,13 @@
     <ProjectReference Include="..\..\SlimCluster.Membership.Swim\SlimCluster.Membership.Swim.csproj" />
     <ProjectReference Include="..\..\SlimCluster.Serialization.Json\SlimCluster.Serialization.Json.csproj" />
     <ProjectReference Include="..\..\SlimCluster.Consensus.Raft\SlimCluster.Consensus.Raft.csproj" />
+    <ProjectReference Include="..\..\SlimCluster.Transport.Ip\SlimCluster.Transport.Ip.csproj" />
+    <ProjectReference Include="..\..\SlimCluster.Persistence.LocalFile\SlimCluster.Persistence.LocalFile.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <None Update="appsettings.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 

@@ -11,13 +11,21 @@ $msbuild_verbosity = "n"
 $projects = @(
 	"SlimCluster",
 
+	"SlimCluster.Host",
+
 	"SlimCluster.Membership",
 	"SlimCluster.Membership.Swim", 
 
-	#"SlimCluster.Strategy.Raft", 
+	"SlimCluster.Consensus.Raft",
 
 	"SlimCluster.Serialization", 
 	"SlimCluster.Serialization.Json"
+
+	"SlimCluster.Persistence",
+	"SlimCluster.Persistence.LocalFile",
+	
+	"SlimCluster.Transport",
+	"SlimCluster.Transport.Ip"
 )
 
 # msbuild.exe https://msdn.microsoft.com/pl-pl/library/ms164311(v=vs.80).aspx

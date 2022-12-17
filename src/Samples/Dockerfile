@@ -2,18 +2,16 @@ FROM mcr.microsoft.com/dotnet/sdk:7.0 AS base
 WORKDIR /app
 
 FROM mcr.microsoft.com/dotnet/sdk:7.0 AS build
-WORKDIR /src
-COPY . ./
-RUN dotnet restore
-RUN dotnet build -c Release -o /app/build
-
-FROM build AS publish
+WORKDIR /source
+COPY src ./src
+COPY docs ./docs
+WORKDIR /source/src
 ARG SERVICE
 RUN dotnet publish "Samples/${SERVICE}" -c Release -o /app/publish
 
 FROM base AS final
 WORKDIR /app
-COPY --from=publish /app/publish .
+COPY --from=build /app/publish .
 ARG SERVICE
 ENV SERVICE_FILE "${SERVICE}.dll"
 CMD dotnet $SERVICE_FILE

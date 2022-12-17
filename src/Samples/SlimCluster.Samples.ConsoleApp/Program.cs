@@ -1,14 +1,18 @@
 ﻿namespace SlimCluster.Samples.ConsoleApp;
 
 using CommandLine;
+
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+
+using SlimCluster.Consensus.Raft;
+using SlimCluster.Consensus.Raft.Logs;
 using SlimCluster.Membership;
 using SlimCluster.Membership.Swim;
+using SlimCluster.Persistence.LocalFile;
 using SlimCluster.Serialization.Json;
-using SlimCluster.Consensus.Raft;
-using System.Text;
+using SlimCluster.Transport.Ip;
 
 public class CommandLineOptions
 {
@@ -33,39 +37,61 @@ public class Program
             services.AddSingleton(options);
             services.AddHostedService<MainApp>();
 
-            // Setup Swim Cluster Membership
-            services.AddClusterMembership(opts =>
+            // doc:fragment:ExampleStartup
+            services.AddSlimCluster(cfg =>
             {
-                opts.NodeId = Environment.MachineName; // this will use the machine name, in Kubernetes this will be the pod name
-                opts.Port = options.UdpPort;
-                opts.MulticastGroupAddress = options.UdpMulticastGroupAddress;
-                opts.ClusterId = "MyMicroserviceCluster";
-                opts.MembershipEventPiggybackCount = 2;
-            },
-            serializerFactory: (svp) => new JsonSerializer(Encoding.ASCII));
+                cfg.ClusterId = "MyCluster";
+                // This will use the machine name, in Kubernetes this will be the pod name
+                cfg.NodeId = Environment.MachineName;
+
+                // Transport will be over UDP/IP
+                cfg.AddIpTransport(opts =>
+                {
+                    opts.Port = options.UdpPort;
+                    opts.MulticastGroupAddress = options.UdpMulticastGroupAddress;
+                });
+
+                // Setup Swim Cluster Membership
+                cfg.AddSwimMembership(opts =>
+                {
+                    opts.MembershipEventPiggybackCount = 2;
+                });
+
+                // Setup Raft Cluster Consensus
+                cfg.AddRaftConsensus(opts =>
+                {
+                    opts.NodeCount = 3;
+                });
+
+                // Protocol messages will be serialized using JSON
+                cfg.AddJsonSerialization();
+
+                // Cluster state will saved into the local json file in between node restarts
+                cfg.AddPersistenceUsingLocalFile("cluster-state.json");
+            });
+
+            // Raft app specific implementation
+            services.AddSingleton<ILogRepository, InMemoryLogRepository>();
+            services.AddTransient<IStateMachine, AppStateMachine>();
+            
+            // Requires packages: SlimCluster.Membership.Swim, SlimCluster.Consensus.Raft, SlimCluster.Serialization.Json, SlimCluster.Transport.Ip, SlimCluster.Persistence.LocalFile
+            // doc:fragment:ExampleStartup
 
             //// Membership config
             //services.AddSingleton<IClusterMembership>(svp => new StaticClusterMemberlist(clusterId, new INode[] { }));
-
-            //// Raft consensus config
-            //services.AddSingleton<RaftNode>();
-            //services.AddSingleton<RaftCluster>(svp => new RaftCluster(clusterId));
-            //services.AddSingleton<ICluster, RaftCluster>();
-
-            //// App specific customization
-            //services.AddTransient<IRaftTransport, AppRaftTransport>();
-            //services.AddTransient<IStateMachine, AppStateMachine>();
         })
         .Build()
         .RunAsync();
 }
 
-public record MainApp(ILogger<MainApp> Logger, IClusterMembership ClusterMembership) : IHostedService
+public record MainApp(ILogger<MainApp> Logger, IClusterMembership ClusterMembership, ICluster Cluster) : IHostedService
 {
-    public async Task StartAsync(CancellationToken cancellationToken)
+    public Task StartAsync(CancellationToken cancellationToken)
     {
         void PrintActiveMembers() => Logger.LogInformation("This node is aware of {NodeList}", string.Join(", ", ClusterMembership.Members.Select(x => x.Node.ToString())));
 
+        // doc:fragment:ExampleMembershipChanges
+        // Injected: IClusterMembership ClusterMembership
         ClusterMembership.MemberJoined += (target, e) =>
         {
             Logger.LogInformation("The member {NodeId} joined", e.Node.Id);
@@ -85,38 +111,12 @@ public record MainApp(ILogger<MainApp> Logger, IClusterMembership ClusterMembers
                 Logger.LogInformation("The node {NodeId} is suspicious. All active members are: {NodeList}", e.Node.Id, string.Join(", ", ClusterMembership.Members.Where(x => x.Node.Status == SwimMemberStatus.Active)));
             }
         };
+        // doc:fragment:ExampleMembershipChanges
 
-        Logger.LogInformation("Node is starting...");
-        await ClusterMembership.Start();
-
-        Logger.LogInformation("Node is running");
-
-        var taskCompletionSource = new TaskCompletionSource<object?>();
-        Console.CancelKeyPress += (target, e) => taskCompletionSource.TrySetResult(null);
-
-        await taskCompletionSource.Task;
-
-        Logger.LogInformation("Node is stopping...");
-        await ClusterMembership.Stop();
-        Logger.LogInformation("Node is stopped");
+        return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-}
-
-/// <summary>
-/// App specific way of implementing RPC calls for Raft algorithm.
-/// </summary>
-public class AppRaftTransport : IRaftTransport
-{
-    public Task<AppendEntriesResponse> AppendEntries(AppendEntriesRequest request, IAddress node)
-        => throw new NotImplementedException();
-
-    public Task<InstallSnapshotResponse> InstalSnapshot(InstallSnapshotRequest request, IAddress node)
-        => throw new NotImplementedException();
-
-    public Task<RequestVoteResponse> RequestVote(RequestVoteRequest request, IAddress node)
-        => throw new NotImplementedException();
 }
 
 /// <summary>
@@ -124,6 +124,8 @@ public class AppRaftTransport : IRaftTransport
 /// </summary>
 public class AppStateMachine : IStateMachine
 {
-    public Task Apply(IEnumerable<object> commands)
-        => throw new NotImplementedException();
+    public int CurrentIndex => throw new NotImplementedException();
+    public Task<object?> Apply(object command, int index) => throw new NotImplementedException();
+    public Task Restore() => throw new NotImplementedException();
+    public Task Snapshot() => throw new NotImplementedException();
 }

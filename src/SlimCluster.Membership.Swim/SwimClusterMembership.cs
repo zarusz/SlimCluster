@@ -1,51 +1,30 @@
 ﻿namespace SlimCluster.Membership.Swim;
 
+using System.Collections.Concurrent;
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+
+using SlimCluster.Host;
+using SlimCluster.Host.Common;
 using SlimCluster.Membership.Swim.Messages;
-using SlimCluster.Serialization;
+using SlimCluster.Persistence;
+using SlimCluster.Transport;
 
 /// <summary>
 /// The SWIM algorithm implementation of <see cref="IClusterMembership"/> for maintaining membership.
 /// </summary>
-public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMembershipEventListener
+public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterControlComponent, IAsyncDisposable, IMembershipEventListener, IMessageSendingHandler, IMessageArrivedHandler, IDurableComponent
 {
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<SwimClusterMembership> _logger;
     private readonly SwimClusterMembershipOptions _options;
-    private readonly ISerializer _serializer;
     private readonly ITime _time;
-    private readonly Random _random = new();
-
-    /// <summary>
-    /// Other known members
-    /// </summary>
-    private readonly SnapshottedReadOnlyList<SwimMember> _otherMembers;
-    /// <summary>
-    /// Member representing current node.
-    /// </summary>
-    private readonly SwimMemberSelf _selfMember;
-
-    /// <summary>
-    /// List of indirect ping requests that this node has been asked for handling.
-    /// </summary>
-    private readonly SnapshottedReadOnlyList<IndirectPingRequest> _indirectPingRequests;
-
-    public string ClusterId => _options.ClusterId;
-
-    public IMember SelfMember => _selfMember;
-    public IReadOnlyCollection<IMember> OtherMembers => _otherMembers;
-    public IReadOnlyCollection<IMember> Members { get; protected set; }
-
-    public event IClusterMembership.MemberJoinedEventHandler? MemberJoined;
-    public event IClusterMembership.MemberLeftEventHandler? MemberLeft;
-    public event IClusterMembership.MemberStatusChangedEventHandler? MemberStatusChanged;
-    public event IClusterMembership.MemberChangedEventHandler? MemberChanged;
 
     /// <summary>
     /// The messaging endpoint (duplex communication)
     /// </summary>
-    private MessageEndpoint? _messageEndpoint;
+    private readonly IMessageSender _messageSender;
 
     /// <summary>
     /// The gossip component.
@@ -57,88 +36,117 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMemb
     /// </summary>
     private SwimFailureDetector? _failureDetector;
 
-    public SwimClusterMembership(ILoggerFactory loggerFactory, IOptions<SwimClusterMembershipOptions> options, ISerializer serializer, ITime time)
+    /// <summary>
+    /// Queue of arriving messages.
+    /// </summary>
+    private readonly ConcurrentQueue<(SwimMessage Message, IAddress Address)> _messages = new();
+
+    /// <summary>
+    /// Other known members
+    /// </summary>
+    private readonly SnapshottedReadOnlyList<SwimMember> _otherMembers;
+
+    /// <summary>
+    /// Member representing current node.
+    /// </summary>
+    private readonly SwimMemberSelf _selfMember;
+
+    /// <summary>
+    /// List of indirect ping requests that this node has been asked for handling.
+    /// </summary>
+    private readonly SnapshottedReadOnlyList<IndirectPingRequest> _indirectPingRequests;
+
+    public string ClusterId { get; protected set; }
+    public IMember SelfMember => _selfMember;
+    public IReadOnlyCollection<IMember> OtherMembers => _otherMembers;
+    public IReadOnlyCollection<IMember> Members { get; protected set; }
+
+    public event IClusterMembership.MemberJoinedEventHandler? MemberJoined;
+    public event IClusterMembership.MemberLeftEventHandler? MemberLeft;
+    public event IClusterMembership.MemberStatusChangedEventHandler? MemberStatusChanged;
+    public event IClusterMembership.MemberChangedEventHandler? MemberChanged;
+
+    public SwimClusterMembership(
+        ILoggerFactory loggerFactory,
+        IOptions<SwimClusterMembershipOptions> options,
+        IOptions<ClusterOptions> clusterOptions,
+        ITime time,
+        IMessageSender messageSender)
+        : base(loggerFactory.CreateLogger<SwimClusterMembership>())
     {
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<SwimClusterMembership>();
-        _serializer = serializer;
         _time = time;
+        _messageSender = messageSender;
         _options = options.Value;
 
         _indirectPingRequests = new SnapshottedReadOnlyList<IndirectPingRequest>();
 
-        _selfMember = new SwimMemberSelf(_options.NodeId, IPEndPointAddress.Unknown, time, loggerFactory);
+        _selfMember = new SwimMemberSelf(clusterOptions.Value.NodeId, UnknownAddress.Instance, time, loggerFactory);
         _otherMembers = new SnapshottedReadOnlyList<SwimMember>();
         _otherMembers.Changed += (list) => Members = new HashSet<IMember>(list) { _selfMember };
 
+        ClusterId = clusterOptions.Value.ClusterId;
         Members = new HashSet<IMember>(_otherMembers) { _selfMember };
     }
 
-    private bool _isStarted = false;
-
-    public async Task Start()
+    protected override Task OnStarting()
     {
-        if (!_isStarted)
-        {
-            _logger.LogInformation("Cluster membership protocol (SWIM) starting for {NodeId}...", _selfMember.Id);
+        _logger.LogInformation("Cluster membership protocol (SWIM) starting for {NodeId} ...", _selfMember.Id);
 
-            _gossip = new SwimGossip(
-                _loggerFactory.CreateLogger<SwimGossip>(),
-                _options,
-                this,
-                new MembershipEventBuffer(_options.MembershipEventBufferCount));
+        _gossip = new SwimGossip(
+            _loggerFactory.CreateLogger<SwimGossip>(),
+            _options,
+            this,
+            new MembershipEventBuffer(_options.MembershipEventBufferCount));
 
-            _messageEndpoint = new MessageEndpoint(
-                _loggerFactory.CreateLogger<MessageEndpoint>(),
-                _options,
-                _serializer,
-                (msg, endPoint) => _gossip?.OnMessageSending(msg),
-                OnMessageArrived);
+        _failureDetector = new SwimFailureDetector(
+            _loggerFactory.CreateLogger<SwimFailureDetector>(),
+            _options,
+            _messageSender,
+            _otherMembers,
+            _selfMember,
+            _time);
 
-            _failureDetector = new SwimFailureDetector(
-                _loggerFactory.CreateLogger<SwimFailureDetector>(),
-                _options,
-                _messageEndpoint,
-                _otherMembers,
-                _time);
-
-            _isStarted = true;
-
-            _logger.LogInformation("Cluster membership protocol (SWIM) started for {NodeId}", _selfMember.Id);
-
-            await NotifySelfJoined();
-        }
+        return Task.CompletedTask;
     }
 
-    public async Task Stop()
+    protected override Task OnStarted()
     {
-        if (_isStarted)
+        return NotifySelfJoined();
+    }
+
+    protected override Task OnStopping()
+    {
+        _logger.LogInformation("Cluster membership protocol (SWIM) stopping for {NodeId} ...", _selfMember.Id);
+
+        return NotifySelfLeft();
+    }
+
+    protected override Task OnStopped()
+    {
+        _failureDetector = null;
+        _gossip = null;
+
+        return Task.CompletedTask;
+    }
+
+    protected override async Task<bool> OnLoopRun(CancellationToken token)
+    {
+        var idleRun = true;
+
+        if (_messages.TryDequeue(out var arrivedMessage))
         {
-            _logger.LogInformation("Cluster membership protocol (SWIM) stopping for {NodeId}...", _selfMember.Id);
-
-            await NotifySelfLeft();
-
-            if (_failureDetector != null)
-            {
-                await _failureDetector.DisposeAsync();
-                _failureDetector = null;
-            }
-
-            if (_messageEndpoint != null)
-            {
-                await _messageEndpoint.DisposeAsync();
-                _messageEndpoint = null;
-            }
-
-            if (_gossip != null)
-            {
-                _gossip = null;
-            }
-
-            _isStarted = false;
-
-            _logger.LogInformation("Cluster membership protocol (SWIM) stopped for {NodeId}", _selfMember.Id);
+            idleRun = false;
+            await OnMessageArrived(arrivedMessage.Message, arrivedMessage.Address);
         }
+
+        if (_failureDetector != null && !await _failureDetector.DoRun())
+        {
+            idleRun = false;
+        }
+
+        return idleRun;
     }
 
     public async ValueTask DisposeAsync()
@@ -152,7 +160,7 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMemb
         // ToDo: Introduce an option to either use multicast or initial list of nodes seed
 
         // Announce (multicast) to others that this node joined the network
-        return SendToMulticastGroup(new NodeMessage { NodeJoined = new NodeJoinedMessage(_selfMember.Id) }, nameof(NodeJoinedMessage));
+        return SendToMulticastGroup(new NodeJoinedMessage(_selfMember.Id));
     }
 
     protected Task NotifySelfLeft()
@@ -160,101 +168,63 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMemb
         // ToDo: Improvement - send message about leaving to N randomly selected nodes.
 
         // Announce (multicast) to others that this node left the network
-        return SendToMulticastGroup(new NodeMessage { NodeLeft = new NodeLeftMessage(_selfMember.Id) }, nameof(NodeLeftMessage));
+        return SendToMulticastGroup(new NodeLeftMessage(_selfMember.Id));
     }
 
-    private Task SendToMulticastGroup(NodeMessage message, string messageType)
+    private async Task SendToMulticastGroup(SwimMessage message)
     {
-        var endPoint = new IPEndPoint(_messageEndpoint!.MulticastGroupAddress, _options.Port);
-        _logger.LogInformation("Sending {MessageType} for node {NodeId} on the multicast group {MulticastEndPoint}", messageType, _selfMember.Id, endPoint);
-        return _messageEndpoint!.SendMessage(message, endPoint);
+        if (_messageSender.MulticastGroupEndpoint != null)
+        {
+            _logger.LogInformation("Sending {MessageType} for node {NodeId} to the multicast group {MulticastAddress}", message.GetType().Name, _selfMember.Id, _messageSender.MulticastGroupEndpoint);
+            await _messageSender.SendMessage(message, _messageSender.MulticastGroupEndpoint).ConfigureAwait(false);
+        }
     }
 
-    private async Task OnMessageArrived(NodeMessage msg, IPEndPoint remoteEndPoint)
+    private async Task OnMessageArrived(SwimMessage msg, IAddress remoteAddress)
     {
-        if (msg.NodeJoined != null)
-        {
-            await OnNodeJoined(msg.NodeJoined.NodeId, remoteEndPoint, addToEventBuffer: true);
-        }
+        _logger.LogDebug("Processing {MessageType} from remote address {NodeAddress}", msg.GetType().Name, remoteAddress);
 
-        if (msg.NodeWelcome != null)
+        var task = msg switch
         {
-            await OnNodeWelcome(msg.NodeWelcome, remoteEndPoint);
-        }
+            NodeJoinedMessage m => OnNodeJoined(m.FromNodeId, remoteAddress, addToEventBuffer: true),
+            NodeLeftMessage m => OnNodeLeft(m.FromNodeId, addToEventBuffer: true),
+            PingReqMessage m => OnPingReq(m, remoteAddress),
+            PingMessage m => OnPing(m, remoteAddress),
+            AckMessage m => OnAck(m, remoteAddress),
+            _ => null
+        };
 
-        if (msg.NodeLeft != null)
+        if (task != null)
         {
-            await OnNodeLeft(msg.NodeLeft.NodeId, addToEventBuffer: true);
-        }
-
-        if (msg.Ping != null)
-        {
-            await OnPing(msg.Ping, remoteEndPoint);
-        }
-
-        if (msg.PingReq != null)
-        {
-            await OnPingReq(msg.PingReq, remoteEndPoint);
-        }
-
-        if (msg.Ack != null)
-        {
-            await OnPingAck(msg.Ack, remoteEndPoint);
+            await task.ConfigureAwait(false);
         }
 
         // process gossip events
         if (_gossip != null)
         {
-            await _gossip.OnMessageArrived(msg);
+            await _gossip.OnMessageArrived(msg, remoteAddress).ConfigureAwait(false);
         }
     }
 
-    protected SwimMember CreateMember(string nodeId, IPEndPointAddress endPoint)
-        => new(nodeId, endPoint, _time.Now, SwimMemberStatus.Active, OnMemberStatusChanged, _loggerFactory.CreateLogger<SwimMember>());
+    protected SwimMember CreateMember(string nodeId, IAddress address)
+        => new(nodeId, address, _time.Now, SwimMemberStatus.Active, OnMemberStatusChanged, _loggerFactory.CreateLogger<SwimMember>());
 
-    public Task OnNodeJoined(string nodeId, IPEndPoint senderEndPoint)
-        => OnNodeJoined(nodeId, senderEndPoint, addToEventBuffer: false);
+    public Task OnNodeJoined(string nodeId, IAddress senderAddress)
+        => OnNodeJoined(nodeId, senderAddress, addToEventBuffer: false);
 
-    protected Task OnNodeJoined(string nodeId, IPEndPoint senderEndPoint, bool addToEventBuffer)
+    protected Task OnNodeJoined(string nodeId, IAddress senderAddress, bool addToEventBuffer)
     {
+        var member = EnsureNodeOnMemberlist(nodeId, senderAddress);
+
         // Add other members only
-        if (nodeId != _selfMember.Id)
+        if (member.Id != _selfMember.Id)
         {
-            var member = _otherMembers.SingleOrDefault(x => x.Id == nodeId);
-            if (member == null)
+            _logger.LogInformation("Node {NodeId} joined at {NodeAddress}", nodeId, senderAddress);
+
+            if (addToEventBuffer)
             {
-                _logger.LogInformation("Node {NodeId} joined at {NodeEndPoint}", nodeId, senderEndPoint);
-
-                member = CreateMember(nodeId, new IPEndPointAddress(senderEndPoint));
-                _otherMembers.Mutate(list => list.Add(member));
-
-                if (addToEventBuffer)
-                {
-                    // Notify the member joined
-                    _gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Joined, _time.Now) { NodeAddress = member.Address.ToString() });
-                }
-
-                if (_options.WelcomeMessage.IsEnabled)
-                {
-                    // Send welcome
-
-                    // If random, toss a coin - to avoid every node sending the same memberlist data
-                    if (!_options.WelcomeMessage.IsRandom || _random.Next(2) == 1)
-                    {
-                        // Fire & forget
-                        _ = SendWelcome(nodeId, senderEndPoint);
-                    }
-                }
-
-                _ = NotifyMemberJoined(member);
-            }
-        }
-        else
-        {
-            // Record the observed external IP address for self
-            if (_selfMember.OnObservedAddress(senderEndPoint))
-            {
-                _ = NotifyMemberChanged(_selfMember);
+                // Notify the member joined
+                _gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Joined, _time.Now) { NodeAddress = member.Address.ToString() });
             }
         }
 
@@ -272,7 +242,7 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMemb
             var member = _otherMembers.SingleOrDefault(x => x.Id == nodeId);
             if (member != null)
             {
-                _logger.LogInformation("Node {NodeId} left at {NodeEndPoint}", nodeId, member.Address.EndPoint);
+                _logger.LogInformation("Node {NodeId} left at {NodeAddress}", nodeId, member.Address);
                 _otherMembers.Mutate(list => list.Remove(member));
 
                 if (addToEventBuffer)
@@ -347,94 +317,69 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMemb
         return Task.CompletedTask;
     }
 
-    private Task SendWelcome(string nodeId, IPEndPoint endPoint)
+    private SwimMember EnsureNodeOnMemberlist(string nodeId, IAddress nodeAddress)
     {
-        var message = new NodeMessage
+        _logger.LogDebug("Ensuring node {NodeId}@{NodeAddress} is on the memberlist", nodeId, nodeAddress);
+
+        var member = nodeId == _selfMember.Id
+            ? _selfMember
+            : _otherMembers.SingleOrDefault(x => x.Id == nodeId);
+        if (member != null)
         {
-            NodeWelcome = new NodeWelcomeMessage
+            // Check if address changed
+            if (member.OnObservedAddress(nodeAddress))
             {
-                NodeId = _selfMember.Id,
-                Nodes = _otherMembers
-                    .Where(x => x.SwimStatus.IsActive) // only active members
-                    .Where(x => x.Node.Id != nodeId) // exclude the newly joined node
-                    .Select(x => new ActiveNode
-                    {
-                        NodeId = x.Node.Id,
-                        NodeAddress = x.Node.Address.ToString(),
-                    })
-                    .ToList()
+                _ = NotifyMemberChanged(member);
             }
-        };
-
-        _logger.LogDebug("Sending Welcome to {NodeId} on {NodeEndPoint} with {NodeCount} known members (including self)", nodeId, endPoint, message.NodeWelcome.Nodes.Count + 1);
-
-        return _messageEndpoint!.SendMessage(message, endPoint);
-    }
-
-    protected Task OnNodeWelcome(NodeWelcomeMessage m, IPEndPoint senderEndPoint)
-    {
-        _logger.LogInformation("Recieved starting list of nodes ({NodeCount}) from {NodeEndPoint}", m.Nodes.Count + 1, senderEndPoint);
-
-        _otherMembers.Mutate(list =>
+        }
+        else
         {
-            foreach (var node in m.Nodes)
+            // Try add if it's not yet on memberlist
+            member = _otherMembers.Mutate(list =>
             {
-                if (node.NodeId != _selfMember.Id)
+                var existingMember = list.SingleOrDefault(x => x.Id == nodeId);
+                if (existingMember == null)
                 {
-                    if (list.All(x => x.Id != node.NodeId))
-                    {
-                        var member = CreateMember(node.NodeId, IPEndPointAddress.Parse(node.NodeAddress));
-                        list.Add(member);
-                    }
+                    existingMember = CreateMember(nodeId, nodeAddress);
+                    list.Add(existingMember);
+                    _logger.LogTrace("Added {Node} to the memberlist", existingMember);
                 }
-                else
-                {
-                    // Record the observed external IP address for self
-                    _selfMember.OnObservedAddress(senderEndPoint);
-                }
-            }
+                return existingMember;
+            });
 
-            // Add the sender member (not included in the welcome message node list)
-            if (list.All(x => x.Id != m.NodeId))
-            {
-                var member = CreateMember(m.NodeId, new IPEndPointAddress(senderEndPoint));
-                list.Add(member);
-            }
-        });
-
-        // ToDo: Invoke an event hook
-
-        return Task.CompletedTask;
+            _ = NotifyMemberJoined(member);
+        }
+        return member;
     }
 
-    protected Task OnPing(PingMessage m, IPEndPoint senderEndPoint)
-        => SendAck(m, senderEndPoint);
-
-    private Task SendAck(IHasPeriodSequenceNumber m, IPEndPoint senderEndPoint, string? nodeId = null)
+    protected async Task OnPing(PingMessage m, IAddress senderAddress)
     {
-        var message = new NodeMessage
+        EnsureNodeOnMemberlist(m.FromNodeId, senderAddress);
+        await SendAck(m, senderAddress);
+    }
+
+    private Task SendAck(IHasPeriodSequenceNumber m, IAddress senderAddress, string? onBehalfOfNodeId = null)
+    {
+        var message = new AckMessage(_selfMember.Id)
         {
-            Ack = new AckMessage
-            {
-                NodeId = nodeId ?? _selfMember.Id,
-                PeriodSequenceNumber = m.PeriodSequenceNumber,
-            }
+            NodeId = onBehalfOfNodeId ?? _selfMember.Id,
+            PeriodSequenceNumber = m.PeriodSequenceNumber,
         };
-
-        _logger.LogDebug("Sending Ack with node {NodeId}, period sequence number {PeriodSequenceNumber} to remote {NodeEndPoint}", message.Ack.NodeId, message.Ack.PeriodSequenceNumber, senderEndPoint);
-
-        return _messageEndpoint!.SendMessage(message, senderEndPoint);
+        _logger.LogDebug("Sending Ack with node {NodeId}, period sequence number {PeriodSequenceNumber} to remote {NodeAddress}", message.NodeId, message.PeriodSequenceNumber, senderAddress);
+        return _messageSender.SendMessage(message, senderAddress);
     }
 
-    protected Task OnPingReq(PingReqMessage m, IPEndPoint senderEndPoint)
+    protected Task OnPingReq(PingReqMessage m, IAddress senderAddress)
     {
-        var targetNodeEndpoint = IPEndPointAddress.Parse(m.NodeAddress).EndPoint;
+        EnsureNodeOnMemberlist(m.FromNodeId, senderAddress);
+
+        var targetNodeAddress = senderAddress.Parse(m.NodeAddress);
 
         // Record PingReq in local list with expiration
         var indirectPingRequest = new IndirectPingRequest(
             periodSequenceNumber: m.PeriodSequenceNumber,
-            targetEndpoint: targetNodeEndpoint,
-            requestingEndpoint: senderEndPoint,
+            targetAddress: targetNodeAddress,
+            requestingAddress: senderAddress,
             expiresAt: _time.Now.Add(_options.ProtocolPeriod.Multiply(3))); // Waiting 3 protocol period cycles should be more than enough
 
         _indirectPingRequests.Mutate(list =>
@@ -447,20 +392,16 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMemb
             list.Add(indirectPingRequest);
         });
 
-        var message = new NodeMessage
+        var message = new PingMessage(_selfMember.Id)
         {
-            Ping = new PingMessage
-            {
-                PeriodSequenceNumber = m.PeriodSequenceNumber
-            }
+            PeriodSequenceNumber = m.PeriodSequenceNumber
         };
 
-        _logger.LogDebug("Sending indirect Ping with period sequence number {PeriodSequenceNumber} to remote {NodeEndPoint}", m.PeriodSequenceNumber, targetNodeEndpoint);
-
-        return _messageEndpoint!.SendMessage(message, targetNodeEndpoint);
+        _logger.LogDebug("Sending indirect Ping with period sequence number {PeriodSequenceNumber} to remote {NodeAddress}", m.PeriodSequenceNumber, targetNodeAddress);
+        return _messageSender.SendMessage(message, targetNodeAddress);
     }
 
-    protected async Task OnPingAck(AckMessage m, IPEndPoint senderEndPoint)
+    protected async Task OnAck(AckMessage m, IAddress senderAddress)
     {
         if (_failureDetector == null)
         {
@@ -469,7 +410,7 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMemb
         }
 
         // Forward acks for PingReq (if any)
-        var matchedIndirectPingRequests = _indirectPingRequests.Where(x => x.TargetEndpoint == senderEndPoint && x.PeriodSequenceNumber == m.PeriodSequenceNumber).ToList();
+        var matchedIndirectPingRequests = _indirectPingRequests.Where(x => x.TargetEndpoint.Equals(senderAddress) && x.PeriodSequenceNumber == m.PeriodSequenceNumber).ToList();
         if (matchedIndirectPingRequests.Count > 0)
         {
             _indirectPingRequests.Mutate(list =>
@@ -481,10 +422,55 @@ public class SwimClusterMembership : IClusterMembership, IAsyncDisposable, IMemb
             });
 
             // Send Acks to those nodes who requested PingReq before
-            await Task.WhenAll(matchedIndirectPingRequests.Select(pr => SendAck(m, pr.RequestingEndpoint, nodeId: m.NodeId)));
+            await Task.WhenAll(matchedIndirectPingRequests.Select(pr => SendAck(m, pr.RequestingEndpoint, onBehalfOfNodeId: m.NodeId)));
         }
 
         // Let the protocol period know that an Ack arrived
-        await _failureDetector.OnPingAckArrived(m, senderEndPoint);
+        await _failureDetector.OnAckArrived(m, senderAddress);
     }
+
+    #region IMessageSendingHandler
+
+    public Task OnMessageSending(object message, IAddress address)
+    {
+        if (message is SwimMessage swimMessage)
+        {
+            _gossip?.OnMessageSending(swimMessage);
+        }
+        return Task.CompletedTask;
+    }
+
+    #endregion
+
+    #region IMessageArrivedHandler
+
+    public Task OnMessageArrived(object message, IAddress address)
+    {
+        if (message is SwimMessage swimMessage)
+        {
+            _messages.Enqueue((swimMessage, address));
+        }
+        return Task.CompletedTask;
+    }
+
+    #endregion
+
+    #region IMessageHandler
+
+    // We only want to recieve notification about SWIM messages
+    public bool CanHandle(object message) => message is SwimMessage;
+
+    #endregion
+
+    #region IDurableComponent
+
+    public void OnStateRestore(IStateReader state)
+    {
+    }
+
+    public void OnStatePersist(IStateWriter state)
+    {
+    }
+
+    #endregion
 }

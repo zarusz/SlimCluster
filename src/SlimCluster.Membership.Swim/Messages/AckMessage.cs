@@ -1,8 +1,17 @@
 ﻿namespace SlimCluster.Membership.Swim.Messages;
 
-public class AckMessage : IHasNodeId, IHasPeriodSequenceNumber
+public class AckMessage : SwimMessage, IHasNodeId, IHasPeriodSequenceNumber, IHasMembershipEvents
 {
-    public long PeriodSequenceNumber { get; set; }
-
     public string NodeId { get; set; } = string.Empty;
+    public long PeriodSequenceNumber { get; set; }
+    /// <inheritdoc/>
+    public IEnumerable<MembershipEvent>? Events { get; set; }
+
+    protected AckMessage()
+    {
+    }
+
+    public AckMessage(string fromNodeId) : base(fromNodeId)
+    {
+    }
 }

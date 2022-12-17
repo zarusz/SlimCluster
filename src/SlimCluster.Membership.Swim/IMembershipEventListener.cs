@@ -2,6 +2,6 @@
 
 public interface IMembershipEventListener
 {
-    Task OnNodeJoined(string nodeId, IPEndPoint senderEndPoint);
+    Task OnNodeJoined(string nodeId, IAddress senderAddress);
     Task OnNodeLeft(string nodeId);
 }

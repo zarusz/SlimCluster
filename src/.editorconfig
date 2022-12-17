@@ -17,9 +17,8 @@ csharp_new_line_before_open_brace =all
 
 #Formatting - organize using options
 
-#do not place System.* using directives before other using directives
-dotnet_sort_system_directives_first = false
-
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = true
 
 #Formatting - spacing options
 

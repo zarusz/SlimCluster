@@ -4,15 +4,12 @@
     <Product>SlimCluster</Product>
     <Company>zarusz</Company>
     <Authors>zarusz</Authors>
-    <Copyright>Copyright © 2022</Copyright>
+    <Copyright>Copyright © 2023</Copyright>
     <PackageReleaseNotes>See https://github.com/zarusz/SlimCluster/releases</PackageReleaseNotes>
     <RepositoryUrl>https://github.com/zarusz/SlimCluster</RepositoryUrl>
     <PackageProjectUrl>https://github.com/zarusz/SlimCluster</PackageProjectUrl>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
-    <PackageIcon>icon.png</PackageIcon>
-    <Version>0.7.0</Version>
-    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
