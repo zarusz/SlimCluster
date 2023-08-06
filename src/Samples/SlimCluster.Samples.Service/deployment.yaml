@@ -8,15 +8,16 @@ spec:
   replicas: 3
   selector:
     matchLabels:
-      app: scca
+      run: sc-service
   template:
     metadata:
       labels:
-        app: scca
+        run: sc-service
     spec:
       containers:
-      - name: consoleapp
+      - name: sc-service
         image: zarusz/slimcluster_samples_service:latest
         imagePullPolicy: IfNotPresent # ensure we get always the fresh container image build
         ports:
+        - containerPort: 5000
         - containerPort: 60001
