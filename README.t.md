@@ -78,6 +78,18 @@ The [`IClusterMembership`](src/SlimCluster.Membership/IClusterMembership.cs) can
 
 @[:cs](src/Samples/SlimCluster.Samples.ConsoleApp/Program.cs,ExampleMembershipChanges)
 
+## Architecture
+
+- The service references SlimCluser NuGet packages and configures MSDI.
+- Nodes (service instances) are communicating over UDP/IP and exchange protocol messages (SWIM and Raft).
+- Cluster membership (nodes that form the cluster) is managed (SWIM).
+- Cluster leader is elected at the beginning and in the event of failure (Raft).
+- Logs (commands that chage state machine state) are replicated from leader to followers (Raft).
+- State Machine in each Node gets logs (commands) applied which have been replicated to majority of nodes (Raft).
+- Clients interact with the Cluster (state mutating operations are executed to Leader or Followers for reads) - depends on the use case.
+
+![SlimCluster architecture](docs/images/SlimCluster.jpg)
+
 ## License
 
 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
