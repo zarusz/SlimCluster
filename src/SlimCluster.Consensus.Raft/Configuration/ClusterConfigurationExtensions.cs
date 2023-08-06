@@ -23,6 +23,7 @@ public static class ClusterConfigurationExtensions
             services.AddSingleton<ISerializationTypeAliasProvider, RaftSerializationTypeAliasProvider>();
 
             services.AddTransient<IDurableComponent>(svp => svp.GetRequiredService<RaftNode>());
+            services.AddTransient<IRaftClientRequestHandler>(svp => svp.GetRequiredService<RaftNode>());
         });
         return cfg;
     }
