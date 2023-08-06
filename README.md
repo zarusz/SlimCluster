@@ -54,7 +54,7 @@ Check out the [Samples](src/Samples/) folder on how to get started.
 Setup membership discovery using the SWIM algorithm and consensus using Raft algorithm:
 
 ```cs
-services.AddSlimCluster(cfg =>
+builder.Services.AddSlimCluster(cfg =>
 {
     cfg.ClusterId = "MyCluster";
     // This will use the machine name, in Kubernetes this will be the pod name
@@ -63,8 +63,8 @@ services.AddSlimCluster(cfg =>
     // Transport will be over UDP/IP
     cfg.AddIpTransport(opts =>
     {
-        opts.Port = options.UdpPort;
-        opts.MulticastGroupAddress = options.UdpMulticastGroupAddress;
+        opts.Port = builder.Configuration.GetValue<int>("UdpPort");
+        opts.MulticastGroupAddress = builder.Configuration.GetValue<string>("UdpMulticastGroupAddress")!;
     });
 
     // Setup Swim Cluster Membership
@@ -77,9 +77,11 @@ services.AddSlimCluster(cfg =>
     cfg.AddRaftConsensus(opts =>
     {
         opts.NodeCount = 3;
+        // Can set a different log serializer, by default ISerializer is used (in our setup its JSON)
+        // opts.LogSerializerType = typeof(JsonSerializer);
     });
 
-    // Protocol messages will be serialized using JSON
+    // Protocol messages (and logs/commands) will be serialized using JSON
     cfg.AddJsonSerialization();
 
     // Cluster state will saved into the local json file in between node restarts
@@ -87,9 +89,9 @@ services.AddSlimCluster(cfg =>
 });
 
 // Raft app specific implementation
-services.AddSingleton<ILogRepository, InMemoryLogRepository>();
-services.AddTransient<IStateMachine, AppStateMachine>();
-            
+builder.Services.AddSingleton<ILogRepository, InMemoryLogRepository>(); // For now, store the logs in memory only
+builder.Services.AddSingleton<IStateMachine, CounterStateMachine>(); // This is app specific machine that implements a distributed counter
+
 // Requires packages: SlimCluster.Membership.Swim, SlimCluster.Consensus.Raft, SlimCluster.Serialization.Json, SlimCluster.Transport.Ip, SlimCluster.Persistence.LocalFile
 ```
 

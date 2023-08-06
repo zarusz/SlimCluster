@@ -53,7 +53,7 @@ Check out the [Samples](src/Samples/) folder on how to get started.
 
 Setup membership discovery using the SWIM algorithm and consensus using Raft algorithm:
 
-@[:cs](src/Samples/SlimCluster.Samples.ConsoleApp/Program.cs,ExampleStartup)
+@[:cs](src/Samples/SlimCluster.Samples.Service/Program.cs,ExampleStartup)
 
 Then somewhere in the micro-service, the [`ICluster`](src/SlimCluster/ICluster.cs) can be used:
 
@@ -76,7 +76,7 @@ IEnumerable<INode> otherNodes = cluster.OtherNodes;
 
 The [`IClusterMembership`](src/SlimCluster.Membership/IClusterMembership.cs) can be used to understand membership changes:
 
-@[:cs](src/Samples/SlimCluster.Samples.ConsoleApp/Program.cs,ExampleMembershipChanges)
+@[:cs](src/Samples/SlimCluster.Samples.Service/MainApp.cs,ExampleMembershipChanges)
 
 ## Architecture
 

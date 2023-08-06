@@ -9,7 +9,7 @@ using SlimCluster.Membership;
 using SlimCluster.Persistence;
 using SlimCluster.Serialization;
 
-public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDurableComponent, IClusterControlComponent
+public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDurableComponent, IClusterControlComponent, IRaftClientRequestHandler
 {
     private readonly ILoggerFactory _loggerFactory;
     private readonly IServiceProvider _serviceProvider;
@@ -417,6 +417,16 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             var leaderState = state.SubComponent("Leader");
             _leaderState.OnStatePersist(leaderState);
         }
+    }
+
+    public Task<object?> OnClientRequest(object command, CancellationToken token)
+    {
+        var leaderState = _leaderState;
+        if (leaderState == null)
+        {
+            throw new ClusterException($"The current node is not the leader, so it cannot handle client requests. Last known leader node: {_followerState?.Leader}");
+        }
+        return leaderState.OnClientRequest(command, token);
     }
 
     #endregion

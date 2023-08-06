@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: sc-consoleapp
+  name: sc-service
   labels:
     app: scca
 spec:
@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: consoleapp
-        image: zarusz/slimcluster_samples_consoleapp:latest
+        image: zarusz/slimcluster_samples_service:latest
         imagePullPolicy: IfNotPresent # ensure we get always the fresh container image build
         ports:
         - containerPort: 60001
