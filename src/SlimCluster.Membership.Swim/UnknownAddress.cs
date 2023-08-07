@@ -2,13 +2,15 @@
 
 public class UnknownAddress : IAddress
 {
-    bool IEquatable<IAddress>.Equals(IAddress other) => other is UnknownAddress;
-
-    IAddress IAddress.Parse(string value) => throw new NotImplementedException();
+    public static readonly IAddress Instance = new UnknownAddress();
 
     protected UnknownAddress()
     {
     }
 
-    public static readonly IAddress Instance = new UnknownAddress();
+    bool IEquatable<IAddress>.Equals(IAddress other) => other is UnknownAddress;
+
+    IAddress IAddress.Parse(string value) => throw new NotImplementedException();
+
+    public override string ToString() => "Unknown";
 }

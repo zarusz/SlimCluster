@@ -38,4 +38,9 @@ public class RaftConsensusOptions
     /// The service type that should be resolved from MSDI for Log Entry serialization.
     /// </summary>
     public Type LogSerializerType { get; set; } = typeof(ISerializer);
+
+    /// <summary>
+    /// The timeout for a leader to process the request.
+    /// </summary>
+    public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(10);
 }

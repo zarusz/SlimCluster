@@ -23,8 +23,8 @@ public abstract class TaskLoop
         : this(logger, TimeSpan.FromMilliseconds(100))
     {
     }
-
     public async Task Start()
+
     {
         if (!_isStarted && !_isStarting)
         {
@@ -54,12 +54,12 @@ public abstract class TaskLoop
             _isStopping = true;
             try
             {
-                await OnStopping();
-
                 if (_loopCts != null)
                 {
                     _loopCts.Cancel();
                 }
+
+                await OnStopping();
 
                 if (_loopTask != null)
                 {

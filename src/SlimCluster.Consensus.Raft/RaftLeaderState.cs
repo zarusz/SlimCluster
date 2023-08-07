@@ -1,6 +1,7 @@
 ﻿namespace SlimCluster.Consensus.Raft;
 
 using System.Collections.Concurrent;
+using System.Diagnostics;
 
 using SlimCluster.Consensus.Raft.Logs;
 using SlimCluster.Host.Common;
@@ -95,7 +96,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
             if (sendNewLogEntries || sendPing)
             {
-                var task = ReplicateLogWithFollower(lastIndex, followerReplicationState, member.Node, now, skipEntries: sendFirstPing, token);
+                var task = ReplicateLogWithFollower(lastIndex, followerReplicationState, member.Node, skipEntries: sendFirstPing, token);
                 tasks.Add(task);
             }
         }
@@ -153,7 +154,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         return Math.Max(majorityMatchIndex, _logRepository.CommitedIndex);
     }
 
-    protected internal async Task ReplicateLogWithFollower(LogIndex lastIndex, FollowerReplicatonState followerReplicationState, INode followerNode, DateTimeOffset now, bool skipEntries, CancellationToken token)
+    protected internal async Task ReplicateLogWithFollower(LogIndex lastIndex, FollowerReplicatonState followerReplicationState, INode followerNode, bool skipEntries, CancellationToken token)
     {
         var prevLogIndex = followerReplicationState.NextIndex - 1;
 
@@ -184,7 +185,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
             var resp = await _messageSender.SendRequest(req, followerNode.Address, timeout: _options.LeaderTimeout);
 
             // when the response arrives, update the timestamp of when the request was sent
-            followerReplicationState.LastAppendRequest = now;
+            followerReplicationState.LastAppendRequest = _time.Now;
 
             if (resp.Success)
             {
@@ -211,10 +212,13 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
                 followerReplicationState.NextIndex--;
             }
         }
-        catch (OperationCanceledException ex)
+        catch (OperationCanceledException)
         {
-            _logger.LogWarning(ex, "{Node}: Did not recieve {MessageName} in time, will retry...", followerNode, nameof(AppendEntriesResponse));
-            // will retry next time
+            // Will retry next time
+            _logger.LogWarning("{Node}: Did not recieve {MessageName} in time, will retry...", followerNode, nameof(AppendEntriesResponse));
+
+            // The response did not arrive, account for the wait time we already lost to not keep on calling the possibly failed follower
+            followerReplicationState.LastAppendRequest = _time.Now;
         }
     }
 
@@ -240,12 +244,14 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         var commandIndex = await _logRepository.Append(Term, command);
         _logger.LogTrace("Appended command at index {Index} in term {Term}", commandIndex, Term);
 
+        var requestTimer = Stopwatch.StartNew();
+
         var tcs = new TaskCompletionSource<object?>();
         _pendingCommandResults.TryAdd(commandIndex, tcs);
         try
         {
             // Wait until index committed (replicated to majority of nodes) and applied to state machine
-            while (true)
+            while (requestTimer.Elapsed < _options.RequestTimeout)
             {
                 token.ThrowIfCancellationRequested();
 
@@ -261,9 +267,13 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         }
         finally
         {
+            // Attempt to cancel if still was pending
+            tcs.TrySetCanceled();
+
             // Clean up pending commands
             _pendingCommandResults.TryRemove(commandIndex, out var _);
         }
+        return null;
     }
 
     #region IDurableComponent

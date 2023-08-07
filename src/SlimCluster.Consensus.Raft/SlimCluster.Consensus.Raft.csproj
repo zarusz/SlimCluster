@@ -3,7 +3,7 @@
   <Import Project="../Common.NuGet.Properties.xml" />
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+    <TargetFrameworks>netstandard2.1;net6</TargetFrameworks>
     <Description>Raft consensus algorithm implementation for a distributed .NET service</Description>
     <PackageTags>SlimCluster Cluster Consensus Raft</PackageTags>
   </PropertyGroup>

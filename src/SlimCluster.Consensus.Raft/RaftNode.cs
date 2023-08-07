@@ -2,6 +2,8 @@
 
 using System.Collections.Concurrent;
 
+using Microsoft.Extensions.DependencyInjection;
+
 using SlimCluster.Consensus.Raft.Logs;
 using SlimCluster.Host;
 using SlimCluster.Host.Common;
@@ -137,7 +139,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
         _candidateState = null;
 
-        _followerState = new RaftFollowerState(_loggerFactory.CreateLogger<RaftFollowerState>(), _options, _time, null);
+        _followerState = new RaftFollowerState(_loggerFactory.CreateLogger<RaftFollowerState>(), _options, _time, _currentTerm, null);
     }
 
     protected async Task BecomeLeader()
@@ -147,7 +149,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
         _followerState = null;
 
-        var logSerializer = (ISerializer)_serviceProvider.GetService(_options.LogSerializerType);
+        var logSerializer = (ISerializer)_serviceProvider.GetRequiredService(_options.LogSerializerType);
 
         _leaderState = new RaftLeaderState(
             _loggerFactory.CreateLogger<RaftLeaderState>(),
@@ -365,6 +367,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         if (Status == RaftNodeStatus.Follower && _followerState != null)
         {
             // When election timeout, start new election.
+            // ToDo: Allow for a longer window here on node start esp when the leader is already established - wait for membership for a bit
             if (_time.Now > _followerState.LeaderTimeout)
             {
                 _logger.LogInformation("Did not hear from leader within the alloted timeout {LeaderTimeout} - starting an election", _options.LeaderTimeout);

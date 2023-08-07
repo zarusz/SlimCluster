@@ -3,7 +3,8 @@ kind: Deployment
 metadata:
   name: sc-service
   labels:
-    app: scca
+    app: sc-service
+    run: sc-service
 spec:
   replicas: 3
   selector:
@@ -21,3 +22,6 @@ spec:
         ports:
         - containerPort: 5000
         - containerPort: 60001
+        env:
+        - name: ASPNETCORE_URLS
+          value: "http://+:5000"

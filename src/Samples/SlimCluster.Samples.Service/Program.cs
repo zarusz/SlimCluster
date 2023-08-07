@@ -3,15 +3,22 @@ using SlimCluster.Consensus.Raft;
 using SlimCluster.Consensus.Raft.Logs;
 using SlimCluster.Membership.Swim;
 using SlimCluster.Persistence.LocalFile;
+using SlimCluster.Samples.ConsoleApp;
+using SlimCluster.Samples.ConsoleApp.State.Logs;
 using SlimCluster.Samples.ConsoleApp.State.StateMachine;
+using SlimCluster.Serialization;
 using SlimCluster.Serialization.Json;
 using SlimCluster.Transport.Ip;
 
 var builder = WebApplication.CreateBuilder(args);
 
+//builder.Host.UseConsoleLifetime();
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+builder.Services.AddHostedService<MainApp>();
 
 // doc:fragment:ExampleStartup
 builder.Services.AddSlimCluster(cfg =>
@@ -51,6 +58,7 @@ builder.Services.AddSlimCluster(cfg =>
 // Raft app specific implementation
 builder.Services.AddSingleton<ILogRepository, InMemoryLogRepository>(); // For now, store the logs in memory only
 builder.Services.AddSingleton<IStateMachine, CounterStateMachine>(); // This is app specific machine that implements a distributed counter
+builder.Services.AddSingleton<ISerializationTypeAliasProvider, CommandSerializationTypeAliasProvider>();
 
 // Requires packages: SlimCluster.Membership.Swim, SlimCluster.Consensus.Raft, SlimCluster.Serialization.Json, SlimCluster.Transport.Ip, SlimCluster.Persistence.LocalFile
 // doc:fragment:ExampleStartup
@@ -63,11 +71,8 @@ builder.Services.AddTransient(svp => (ICounterState)svp.GetRequiredService<IStat
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseHttpsRedirection();
 
@@ -75,4 +80,4 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-app.Run();
+await app.RunAsync();

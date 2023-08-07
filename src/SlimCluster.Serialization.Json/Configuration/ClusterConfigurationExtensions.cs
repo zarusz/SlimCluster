@@ -15,7 +15,7 @@ public static class ClusterConfigurationExtensions
 
         cfg.PostConfigurationActions.Add(services =>
         {
-            services.TryAddSingleton<ISerializer>(svp => new JsonSerializer(encoding, svp.GetRequiredService<IEnumerable<ISerializationTypeAliasProvider>>()));
+            services.TryAddSingleton<ISerializer>(svp => new AliasedJsonMessageSerializer(encoding, svp.GetRequiredService<IEnumerable<ISerializationTypeAliasProvider>>()));
         });
 
         return cfg;
