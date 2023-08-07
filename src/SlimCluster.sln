@@ -30,8 +30,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Samples", "Samples", "{4242
 		Samples\README.md = Samples\README.md
 	EndProjectSection
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.Samples.ConsoleApp", "Samples\SlimCluster.Samples.ConsoleApp\SlimCluster.Samples.ConsoleApp.csproj", "{AC8D5966-70AC-44A6-BB8C-4946B2D5EA9F}"
-EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.Membership", "SlimCluster.Membership\SlimCluster.Membership.csproj", "{0A5F274C-688C-4FED-8FC2-6242DD35F5C8}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SlimCluster.Membership.Redis", "SlimCluster.Membership.Redis\SlimCluster.Membership.Redis.csproj", "{71256028-489E-4EAC-A1D0-0670C0523695}"
@@ -80,10 +78,6 @@ Global
 		{7199B34A-3DAD-43EC-990A-9F5C89FA6F0A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7199B34A-3DAD-43EC-990A-9F5C89FA6F0A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7199B34A-3DAD-43EC-990A-9F5C89FA6F0A}.Release|Any CPU.Build.0 = Release|Any CPU
-		{AC8D5966-70AC-44A6-BB8C-4946B2D5EA9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{AC8D5966-70AC-44A6-BB8C-4946B2D5EA9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{AC8D5966-70AC-44A6-BB8C-4946B2D5EA9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{AC8D5966-70AC-44A6-BB8C-4946B2D5EA9F}.Release|Any CPU.Build.0 = Release|Any CPU
 		{0A5F274C-688C-4FED-8FC2-6242DD35F5C8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{0A5F274C-688C-4FED-8FC2-6242DD35F5C8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0A5F274C-688C-4FED-8FC2-6242DD35F5C8}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -157,7 +151,6 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
-		{AC8D5966-70AC-44A6-BB8C-4946B2D5EA9F} = {42420C23-31F6-46F4-AFEA-A12206C47366}
 		{9000822B-486A-4C30-A741-623BBFE759C5} = {42420C23-31F6-46F4-AFEA-A12206C47366}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
