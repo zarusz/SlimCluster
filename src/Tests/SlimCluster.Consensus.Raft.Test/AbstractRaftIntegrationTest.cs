@@ -2,6 +2,7 @@
 
 using SlimCluster.Consensus.Raft.Logs;
 using SlimCluster.Membership;
+using SlimCluster.Serialization;
 using SlimCluster.Transport;
 
 public abstract class AbstractRaftIntegrationTest
@@ -14,6 +15,7 @@ public abstract class AbstractRaftIntegrationTest
     protected readonly Mock<ITime> _timeMock;
     protected readonly Mock<InMemoryLogRepository> _logRepositoryMock;
     protected readonly Mock<IMessageSender> _messageSenderMock;
+    protected readonly Mock<ISerializer> _serializerMock;
 
     protected DateTimeOffset _now = new(2023, 6, 25, 13, 0, 0, 0, TimeSpan.Zero);
 
@@ -27,6 +29,7 @@ public abstract class AbstractRaftIntegrationTest
         _timeMock = new Mock<ITime>();
         _logRepositoryMock = new Mock<InMemoryLogRepository> { CallBase = true };
         _messageSenderMock = new Mock<IMessageSender>();
+        _serializerMock = new Mock<ISerializer>();
 
         _options = new RaftConsensusOptions
         {
@@ -50,5 +53,7 @@ public abstract class AbstractRaftIntegrationTest
 
         _serviceProviderMock = new Mock<IServiceProvider>();
         _stateMachineMock = new Mock<IStateMachine>();
+
+        _serviceProviderMock.Setup(x => x.GetService(typeof(ISerializer))).Returns(_serializerMock.Object);
     }
 }

@@ -1,19 +1,19 @@
 ﻿namespace SlimCluster.Serialization.Json;
 
+using System.Text;
+
 using Newtonsoft.Json;
 
 using SlimCluster.Serialization;
 
-using System.Text;
-
-public class JsonSerializer : ISerializer
+public class AliasedJsonMessageSerializer : ISerializer
 {
     private readonly Encoding _encoding;
     private readonly JsonSerializerSettings _settings;
     private readonly IDictionary<string, Type> _typeByAlias;
     private readonly IDictionary<Type, string> _aliasByType;
 
-    public JsonSerializer(Encoding encoding, IEnumerable<ISerializationTypeAliasProvider>? typeAliasProviders = null)
+    public AliasedJsonMessageSerializer(Encoding encoding, IEnumerable<ISerializationTypeAliasProvider>? typeAliasProviders = null)
     {
         _encoding = encoding;
         _settings = new JsonSerializerSettings
@@ -37,7 +37,7 @@ public class JsonSerializer : ISerializer
         }
     }
 
-    public JsonSerializer(IEnumerable<ISerializationTypeAliasProvider>? typeAliasProviders = null)
+    public AliasedJsonMessageSerializer(IEnumerable<ISerializationTypeAliasProvider>? typeAliasProviders = null)
         : this(Encoding.ASCII, typeAliasProviders)
     {
     }

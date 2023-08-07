@@ -12,11 +12,11 @@ public class IPMessageEndpoint : TaskLoop, IMessageSender, IAsyncDisposable, ICl
     private readonly ISerializer _serializer;
     private readonly IEnumerable<IMessageSendingHandler> _messageSendingHandlers;
     private readonly IEnumerable<IMessageArrivedHandler> _messageArrivedHandlers;
-
+    private readonly Func<ISocketClient>? _socketClientFactory;
     private readonly IPAddress? _multicastGroupAddress;
     private readonly IAddress? _multicaseGroupEndpoint;
 
-    private readonly ConcurrentDictionary<Guid, TaskCompletionSource<object>> _requests = new ConcurrentDictionary<Guid, TaskCompletionSource<object>>();
+    private readonly ConcurrentDictionary<Guid, TaskCompletionSource<object>> _requests = new();
 
     private ISocketClient? _socketClient;
 
@@ -30,7 +30,7 @@ public class IPMessageEndpoint : TaskLoop, IMessageSender, IAsyncDisposable, ICl
         ISerializer serializer,
         IEnumerable<IMessageSendingHandler> messageSendingHandlers,
         IEnumerable<IMessageArrivedHandler> messageArrivedHandlers,
-        ISocketClient? socketClient = null)
+        Func<ISocketClient>? socketClientFactory = null)
         : base(logger)
     {
         _logger = logger;
@@ -38,16 +38,21 @@ public class IPMessageEndpoint : TaskLoop, IMessageSender, IAsyncDisposable, ICl
         _serializer = serializer;
         _messageSendingHandlers = messageSendingHandlers;
         _messageArrivedHandlers = messageArrivedHandlers;
-
+        _socketClientFactory = socketClientFactory;
         _multicastGroupAddress = _options.MulticastGroupAddress != null ? IPAddress.Parse(_options.MulticastGroupAddress) : null;
         _multicaseGroupEndpoint = _multicastGroupAddress != null ? new IPEndPointAddress(new IPEndPoint(_multicastGroupAddress, _options.Port)) : null;
+    }
+
+    protected override async Task OnStarting()
+    {
+        await base.OnStarting();
 
         //NetworkInterface.GetAllNetworkInterfaces()
         //var ip = IPAddress.Parse("192.168.100.50");
         //var ep = new IPEndPoint(ip, options.UdpPort);
         //udpClient = new UdpClient(ep);
         // Join or create a multicast group
-        _socketClient = socketClient ?? new UdpSocketClient(_options);
+        _socketClient = _socketClientFactory != null ? _socketClientFactory() : new UdpSocketClient(_options);
         // See https://docs.microsoft.com/pl-pl/dotnet/api/system.net.sockets.udpclient.joinmulticastgroup?view=net-5.0
         // Join multicast group (if specified)
         if (_multicastGroupAddress != null)
@@ -62,19 +67,11 @@ public class IPMessageEndpoint : TaskLoop, IMessageSender, IAsyncDisposable, ICl
                 _logger.LogError(ex, "Could not join multicast group {MulticastGroup}", _multicastGroupAddress);
             }
         }
-
-        _ = Start();
     }
 
-    public async ValueTask DisposeAsync()
+    protected override async Task OnStopping()
     {
-        await DisposeAsyncCore().ConfigureAwait(false);
-        GC.SuppressFinalize(this);
-    }
-
-    protected virtual async ValueTask DisposeAsyncCore()
-    {
-        await Stop().ConfigureAwait(false);
+        await base.OnStopping();
 
         // Stop UDP client
         if (_socketClient != null)
@@ -97,6 +94,17 @@ public class IPMessageEndpoint : TaskLoop, IMessageSender, IAsyncDisposable, ICl
             }
             socketClient.Dispose();
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await DisposeAsyncCore().ConfigureAwait(false);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual async ValueTask DisposeAsyncCore()
+    {
+        await Stop().ConfigureAwait(false);
     }
 
     public async Task SendMessage(object message, IAddress address)
@@ -143,7 +151,7 @@ public class IPMessageEndpoint : TaskLoop, IMessageSender, IAsyncDisposable, ICl
                 throw new OperationCanceledException();
             }
 
-            var response = await requestSource.Task.ConfigureAwait(false);
+            var response = requestSource.Task.Result;
 
             return (TResponse)response;
         }
@@ -159,13 +167,17 @@ public class IPMessageEndpoint : TaskLoop, IMessageSender, IAsyncDisposable, ICl
         IPEndPoint? remoteEndPoint = null;
         try
         {
-            (remoteEndPoint, var messagePayload) = await _socketClient!.ReceiveAsync().ConfigureAwait(false);
+            (remoteEndPoint, var messagePayload) = await _socketClient!.ReceiveAsync(token).ConfigureAwait(false);
 
             await OnMessage(IPEndPointAddress.From(remoteEndPoint), messagePayload).ConfigureAwait(false);
         }
-        catch (ObjectDisposedException)
+        catch (SocketException e) when (e.SocketErrorCode == SocketError.OperationAborted)
         {
-            // Intended: this is how it exists from ReceiveAsync            
+            // Intended: this is how it exists from ReceiveAsync
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
             return true;
         }
         catch (Exception e)

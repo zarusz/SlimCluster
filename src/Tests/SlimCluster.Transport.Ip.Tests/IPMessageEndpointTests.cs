@@ -42,15 +42,17 @@ public class IPMessageEndpointTests
         var remoteAddress = IPEndPointAddress.Parse("192.168.1.2:9999");
         var selfEndPoint = IPEndPointAddress.Parse("192.168.1.1:9999");
 
-        var subject = new IPMessageEndpoint(
+        await using var subject = new IPMessageEndpoint(
             NullLogger<IPMessageEndpoint>.Instance,
             Options.Create(_options),
             _serializerMock.Object,
             new[] { _messageSendingHandlerMock.Object },
             new[] { _messageArrivedHandlerMock.Object },
-            _socketClient);
+            () => _socketClient);
 
-        var timeout = TimeSpan.FromMilliseconds(300);
+        await subject.Start();
+
+        var timeout = TimeSpan.FromMilliseconds(250);
 
         // response arrived from remote endpoint
         _socketClient.OnMessageSend(async (endPoint, payload) =>

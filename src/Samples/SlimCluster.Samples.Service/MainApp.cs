@@ -6,10 +6,12 @@ using Microsoft.Extensions.Logging;
 using SlimCluster.Membership;
 using SlimCluster.Membership.Swim;
 
-public record MainApp(ILogger<MainApp> Logger, IClusterMembership ClusterMembership, ICluster Cluster) : IHostedService
+public record MainApp(ILogger<MainApp> Logger, IClusterMembership ClusterMembership/*, ICluster Cluster*/) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        Logger.LogInformation("Starting service...");
+
         void PrintActiveMembers() => Logger.LogInformation("This node is aware of {NodeList}", string.Join(", ", ClusterMembership.Members.Select(x => x.Node.ToString())));
 
         // doc:fragment:ExampleMembershipChanges
@@ -38,5 +40,9 @@ public record MainApp(ILogger<MainApp> Logger, IClusterMembership ClusterMembers
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        Logger.LogInformation("Stopping service...");
+        return Task.CompletedTask;
+    }
 }

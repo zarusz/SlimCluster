@@ -14,4 +14,4 @@ WORKDIR /app
 COPY --from=build /app/publish .
 ARG SERVICE
 ENV SERVICE_FILE "${SERVICE}.dll"
-CMD dotnet $SERVICE_FILE
+ENTRYPOINT [ "/usr/bin/dotnet", "SlimCluster.Samples.Service.dll" ]

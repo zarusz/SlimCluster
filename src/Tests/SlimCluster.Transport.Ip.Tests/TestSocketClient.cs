@@ -7,7 +7,6 @@ using System.Threading.Channels;
 public class TestSocketClient : ISocketClient
 {
     private readonly Channel<(IPEndPoint, byte[])> _channel;
-    private readonly CancellationTokenSource _tokenSource;
     private readonly ConcurrentBag<(IPEndPoint, byte[])> _messagesSent = new();
     private readonly List<Func<IPEndPoint, byte[], Task>> _messageSentCallbacks = new();
 
@@ -19,14 +18,10 @@ public class TestSocketClient : ISocketClient
             SingleReader = false,
             AllowSynchronousContinuations = false,
         });
-        _tokenSource = new CancellationTokenSource();
     }
 
     public void Dispose()
     {
-        _tokenSource.Cancel();
-        _tokenSource.Dispose();
-
         GC.SuppressFinalize(this);
     }
 
@@ -34,16 +29,16 @@ public class TestSocketClient : ISocketClient
 
     public void JoinMulticastGroup(IPAddress multicastAddress) { }
 
-    public async Task<(IPEndPoint RemoteEndPoint, byte[] Payload)> ReceiveAsync()
-        => await _channel.Reader.ReadAsync(_tokenSource.Token);
+    public async Task<(IPEndPoint RemoteEndPoint, byte[] Payload)> ReceiveAsync(CancellationToken cancellationToken)
+        => await _channel.Reader.ReadAsync(cancellationToken);
 
     public async Task SendAsync(IPEndPoint endPoint, byte[] payload)
     {
         _messagesSent.Add((endPoint, payload));
-        foreach(var callback in _messageSentCallbacks)
+        foreach (var callback in _messageSentCallbacks)
         {
             await callback(endPoint, payload);
-        }       
+        }
     }
 
     public async Task OnMessageArrived(IPEndPoint endPoint, byte[] payload)

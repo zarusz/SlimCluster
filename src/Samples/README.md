@@ -2,10 +2,12 @@
 
 ## SlimCluster.Samples.Service
 
-This sample showcases a simple .NET Console App that can be built into a docker image and then deployed to Kubernetes (minikube or docker desktop).
+This sample showcases a simple .NET Service (exposing a distributed counter API) that can be built into a docker image and then deployed to Kubernetes (minikube or docker desktop).
 The app is running in 3 instances (pods) on Kubernetes. The instances are forming a cluster.
 
 The node name is assigned from the machine name (`Environment.MachineName`), this is to have the node name align with pod names in Kubernetes.
+
+> The scripts were tests on Docker Desktop with Minikube
 
 To run the sample:
 
@@ -17,10 +19,10 @@ To run the sample:
 ./Docker-BuildSample.ps1
 ```
 
-3. Deploy to Kubernetes (minikube):
+3. Deploy to Kubernetes:
 
 ```txt
-kubectl apply -f deployment.yml
+./Kube-ApplySample.ps1
 ```
 
 4. Check if the pods are running:

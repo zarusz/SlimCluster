@@ -3,7 +3,7 @@
   <Import Project="../Common.NuGet.Properties.xml" />
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+    <TargetFrameworks>netstandard2.1;net6</TargetFrameworks>
     <Description>TCP/IP transport for SlimCluster</Description>
     <PackageTags>SlimCluster Cluster Membership Consensus</PackageTags>
     <ImplicitUsings>enable</ImplicitUsings>
