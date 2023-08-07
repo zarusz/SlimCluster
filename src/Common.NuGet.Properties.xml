@@ -3,7 +3,7 @@
   <Import Project="Common.Properties.xml" />
 
   <PropertyGroup>
-    <Version>0.8.0-rc1</Version>
+    <Version>0.8.0</Version>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageReadmeFile>NuGet.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
