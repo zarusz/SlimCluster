@@ -1,5 +1,4 @@
 ﻿namespace SlimCluster.Consensus.Raft;
-
 /// <summary>
 /// State machine that holds state and is able to apply commands that mutate the machine state.
 /// </summary>

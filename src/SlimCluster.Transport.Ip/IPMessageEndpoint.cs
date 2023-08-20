@@ -142,10 +142,12 @@ public class IPMessageEndpoint : TaskLoop, IMessageSender, IAsyncDisposable, ICl
         _requests[requestId] = requestSource;
         try
         {
+            var timeoutTask = Task.Delay(timeout ?? _options.RequestTimeout);
+
             // Send request
             await SendMessage(request, address).ConfigureAwait(false);
 
-            var finishedTask = await Task.WhenAny(requestSource.Task, Task.Delay(timeout ?? _options.RequestTimeout));
+            var finishedTask = await Task.WhenAny(requestSource.Task, timeoutTask).ConfigureAwait(false);
             if (finishedTask != requestSource.Task)
             {
                 throw new OperationCanceledException();

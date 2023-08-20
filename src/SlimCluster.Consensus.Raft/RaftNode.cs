@@ -1,5 +1,6 @@
 ﻿namespace SlimCluster.Consensus.Raft;
 
+using System;
 using System.Collections.Concurrent;
 
 using Microsoft.Extensions.DependencyInjection;
@@ -19,8 +20,10 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
     private readonly IClusterMembership _clusterMembership;
     private readonly IMessageSender _messageSender;
     private readonly RaftConsensusOptions _options;
+    private readonly ISerializer _logSerializer;
     private readonly ITime _time;
     private readonly IStateMachine _stateMachine;
+
     public RaftNodeStatus Status { get; protected set; }
 
     #region persistent state
@@ -48,6 +51,22 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
     public int CurrentTerm => _currentTerm;
 
+    public INode? LeaderNode
+    {
+        get
+        {
+            if (_leaderState != null && Status == RaftNodeStatus.Leader)
+            {
+                return _clusterMembership.SelfMember.Node;
+            }
+            if (_followerState != null && Status == RaftNodeStatus.Follower)
+            {
+                return _followerState.Leader;
+            }
+            return null;
+        }
+    }
+
     public RaftNode(
         ILoggerFactory loggerFactory,
         IServiceProvider serviceProvider,
@@ -69,6 +88,8 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         _stateMachine = stateMachine;
         _options = options.Value;
 
+        _logSerializer = (ISerializer)_serviceProvider.GetRequiredService(_options.LogSerializerType);
+
         _currentTerm = 0;
         _votedFor = null;
 
@@ -76,22 +97,14 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         _candidateState = null;
         _followerState = null;
         Status = RaftNodeStatus.Unknown;
-
-        if (_options.AutoStart)
-        {
-            _ = Start();
-        }
     }
 
     protected override async Task OnStopping()
     {
-        // Stop the leader loop.
-        if (_leaderState != null)
-        {
-            await _leaderState.Stop();
-            _leaderState = null;
-        }
         await base.OnStopping();
+
+        // Stop the leader loop.
+        await ClearPreviousState();
     }
 
     public async ValueTask DisposeAsync()
@@ -103,7 +116,9 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
     protected async Task StartElection()
     {
+        _logger.LogInformation("Starting election for term {Term}", _currentTerm + 1);
         Status = RaftNodeStatus.Candidate;
+        await ClearPreviousState();
 
         // advance term
         UpdateTerm(_currentTerm + 1);
@@ -111,7 +126,6 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         var randomFactor = new Random().NextDouble();
         var randomInterval = _options.ElectionTimeoutMax.Subtract(_options.ElectionTimeoutMin).Multiply(randomFactor);
         _candidateState = new RaftCandidateState(_currentTerm, _time.Now.Add(_options.ElectionTimeoutMin).Add(randomInterval));
-        _logger.LogInformation("Starting election for term {Term}", _currentTerm);
 
         // vote for self
         _votedFor = _clusterMembership.SelfMember.Node.Id;
@@ -128,9 +142,15 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
     {
         _logger.LogInformation("Becoming a follower for term {Term}", term);
         Status = RaftNodeStatus.Follower;
+        await ClearPreviousState();
 
         UpdateTerm(term);
 
+        _followerState = new RaftFollowerState(_loggerFactory.CreateLogger<RaftFollowerState>(), _options, _time, _currentTerm, null);
+    }
+
+    private async Task ClearPreviousState()
+    {
         if (_leaderState != null)
         {
             await _leaderState.Stop();
@@ -139,7 +159,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
         _candidateState = null;
 
-        _followerState = new RaftFollowerState(_loggerFactory.CreateLogger<RaftFollowerState>(), _options, _time, _currentTerm, null);
+        _followerState = null;
     }
 
     protected async Task BecomeLeader()
@@ -147,9 +167,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         _logger.LogInformation("Becoming a leader {Node} for term {Term}", _clusterMembership.SelfMember.Node, _currentTerm);
         Status = RaftNodeStatus.Leader;
 
-        _followerState = null;
-
-        var logSerializer = (ISerializer)_serviceProvider.GetRequiredService(_options.LogSerializerType);
+        await ClearPreviousState();
 
         _leaderState = new RaftLeaderState(
             _loggerFactory.CreateLogger<RaftLeaderState>(),
@@ -159,7 +177,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             _messageSender,
             _logRepository,
             _stateMachine,
-            logSerializer,
+            _logSerializer,
             _time,
             OnNewerTermDiscovered);
 
@@ -271,13 +289,14 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
         if (Status != RaftNodeStatus.Follower)
         {
-            // Become followe immediately
+            // Become follower immediately
             await BecomeFollower(r.Term);
         }
         _followerState?.OnLeaderMessage(node);
 
         if (_logRepository.LastIndex.Index < r.PrevLogIndex
-            || (r.PrevLogIndex == 0 && r.PrevLogTerm != 0 || r.PrevLogIndex > 0 && _logRepository.GetTermAtIndex(r.PrevLogIndex) != r.PrevLogTerm))
+            || r.PrevLogIndex == 0 && r.PrevLogTerm != 0
+            || r.PrevLogIndex > 0 && _logRepository.GetTermAtIndex(r.PrevLogIndex) != r.PrevLogTerm)
         {
             // Does not contain that log entry yet
             // OR the term at the given index does not match what's in the log entry
@@ -287,7 +306,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
         if (r.Entries != null && r.Entries.Count > 0)
         {
-            await _logRepository.Append(r.PrevLogIndex + 1, r.Term, r.Entries);
+            await _logRepository.Append(r.Entries);
         }
 
         // Confirm all was good
@@ -303,9 +322,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             var logs = await _logRepository.GetLogsAtIndex(indexStart, logsCount).ConfigureAwait(false);
             for (var i = 0; i < logsCount; i++)
             {
-                var commandIndex = indexStart + i;
-                await _stateMachine.Apply(command: logs[i], index: commandIndex).ConfigureAwait(false);
-                await _logRepository.Commit(commandIndex).ConfigureAwait(false);
+                await _stateMachine.Apply(_logRepository, logEntry: logs[i].Entry, logIndex: indexStart + i, _logger, _logSerializer);
             }
         }
     }
@@ -322,6 +339,8 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
         if (_messages.TryDequeue(out var arrivedMessage))
         {
+            // ToDo: Check if message already expires, if so skip
+
             var address = arrivedMessage.Address;
             var node = _clusterMembership.OtherMembers.FirstOrDefault(x => x.Node.Address.Equals(address))?.Node;
             if (node != null)

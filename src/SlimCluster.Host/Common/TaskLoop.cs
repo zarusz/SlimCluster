@@ -20,7 +20,7 @@ public abstract class TaskLoop
     }
 
     protected TaskLoop(ILogger logger)
-        : this(logger, TimeSpan.FromMilliseconds(100))
+        : this(logger, TimeSpan.FromMilliseconds(50))
     {
     }
     public async Task Start()

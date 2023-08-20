@@ -110,6 +110,17 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
         // ToDo: Remove lost nodes from ReplicationStateByNode (after some idle time)
 
+        // ToDo: Perhaps run in a separate task loop
+        idleRun &= await TryApplyLogs().ConfigureAwait(false);
+
+        // idle run
+        return idleRun;
+    }
+
+    private async Task<bool> TryApplyLogs()
+    {
+        var idleRun = true;
+
         // check if log replicated to majorty, if so then
         //   1. apply to state machione
         //   2. notify that commit index changed
@@ -118,32 +129,41 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         var highestReplicatedIndex = FindMajorityReplicatedIndex();
         if (highestReplicatedIndex > commitedIndex)
         {
-            var logIndexStart = commitedIndex + 1;
-            var logCount = highestReplicatedIndex - commitedIndex;
-            var logs = await _logRepository.GetLogsAtIndex(logIndexStart, logCount);
-
-            for (var i = 0; i < logCount; i++)
-            {
-                var index = logIndexStart + i;
-                var result = await _stateMachine.Apply(command: logs[i], index: index);
-                await _logRepository.Commit(index);
-
-                // Signal that this changed and pass result
-                if (_pendingCommandResults.TryGetValue(index, out var tcs))
-                {
-                    tcs.TrySetResult(result);
-                }
-            }
+            await ApplyLogs(commitedIndex, highestReplicatedIndex).ConfigureAwait(false);
+            idleRun = false;
         }
 
-        // idle run
         return idleRun;
+    }
+
+    private async Task ApplyLogs(int commitedIndex, int highestReplicatedIndex)
+    {
+        _logger.LogDebug("HighestReplicatedIndex: {HighestReplicatedIndex}, CommitedIndex: {ComittedIndex}", highestReplicatedIndex, commitedIndex);
+
+        var logIndexStart = commitedIndex + 1;
+        var logCount = highestReplicatedIndex - commitedIndex;
+        var logs = await _logRepository.GetLogsAtIndex(logIndexStart, logCount).ConfigureAwait(false);
+
+        for (var i = 0; i < logCount; i++)
+        {
+            var index = logIndexStart + i;
+
+            var commandResult = await _stateMachine.Apply(_logRepository, logEntry: logs[i].Entry, logIndex: index, _logger, _logSerializer);
+
+            // Signal that this changed and pass result
+            if (_pendingCommandResults.TryGetValue(index, out var tcs))
+            {
+                _logger.LogDebug("Set result to {Result}", commandResult);
+                tcs.TrySetResult(commandResult);
+            }
+        }
     }
 
     private int FindMajorityReplicatedIndex()
     {
         var majorityCount = _options.NodeCount / 2;
 
+        // ToDo: Do not take into acount inactive members
         var orderedMatchIndexes = ReplicationStateByNode.Values.Select(x => x.MatchIndex).OrderByDescending(x => x).ToList();
 
         var majorityMatchIndex = orderedMatchIndexes.FirstOrDefault(matchIndex =>
@@ -170,19 +190,19 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         if (!skipEntries && lastIndex.Index > prevLogIndex)
         {
             // ToDo: Intro option for max logs send
-            var logsCount = Math.Max(lastIndex.Index - prevLogIndex, 1);
+            var logsCount = Math.Min(lastIndex.Index - prevLogIndex, 1);
             var logs = logsCount > 0
                 ? await _logRepository.GetLogsAtIndex(prevLogIndex + 1, logsCount)
                 : null;
 
-            req.Entries = logs?.Select(_logSerializer.Serialize)?.ToList();
+            req.Entries = logs;
         }
 
         try
         {
             _logger.LogDebug("{Node}: Sending {MessageName} with PrevLogIndex = {PrevLogIndex}, PrevLogTerm = {PrevLogTerm}, LogCount = {LogCount}", followerNode, nameof(AppendEntriesRequest), req.PrevLogIndex, req.PrevLogTerm, req.Entries?.Count ?? 0);
             // Note: setting the request timeout to match the leader timeout - now point in waiting longer
-            var resp = await _messageSender.SendRequest(req, followerNode.Address, timeout: _options.LeaderTimeout);
+            var resp = await _messageSender.SendRequest(req, followerNode.Address, timeout: _options.LeaderPingInterval);
 
             // when the response arrives, update the timestamp of when the request was sent
             followerReplicationState.LastAppendRequest = _time.Now;
@@ -207,7 +227,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
                     return;
                 }
 
-                _logger.LogDebug("{Node}: Follower log does not match at MatchIndex = {MatchIndex}", followerNode, followerReplicationState.MatchIndex);
+                _logger.LogInformation("{Node}: Follower log does not match at MatchIndex = {MatchIndex}", followerNode, followerReplicationState.MatchIndex);
                 // logs dont match for the specified index, will retry on next loop run with prev index
                 followerReplicationState.NextIndex--;
             }
@@ -241,7 +261,8 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         using var _ = _logger.BeginScope("Command {Command} processing", command.GetType().Name);
 
         // Append log to local node (must be thread-safe)
-        var commandIndex = await _logRepository.Append(Term, command);
+        var log = _logSerializer.Serialize(command);
+        var commandIndex = await _logRepository.Append(Term, log);
         _logger.LogTrace("Appended command at index {Index} in term {Term}", commandIndex, Term);
 
         var requestTimer = Stopwatch.StartNew();
@@ -255,11 +276,11 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
             {
                 token.ThrowIfCancellationRequested();
 
-                var t = await Task.WhenAny(tcs.Task, Task.Delay(100, token));
+                var t = await Task.WhenAny(tcs.Task, Task.Delay(50, token));
 
                 if (t == tcs.Task)
                 {
-                    var result = await tcs.Task;
+                    var result = tcs.Task.Result;
                     _logger.LogInformation("Command {Command} result is {Result}", command, result);
                     return result;
                 }

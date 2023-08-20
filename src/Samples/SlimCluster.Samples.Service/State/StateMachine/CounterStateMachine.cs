@@ -8,10 +8,10 @@ using SlimCluster.Samples.ConsoleApp.State.Logs;
 /// </summary>
 public class CounterStateMachine : IStateMachine, ICounterState
 {
-    private int _intex = 0;
+    private int _index = 0;
     private int _counter = 0;
 
-    public int CurrentIndex => _intex;
+    public int CurrentIndex => _index;
 
     /// <summary>
     /// The counter value
@@ -22,9 +22,9 @@ public class CounterStateMachine : IStateMachine, ICounterState
     {
         // Note: This is thread safe - there is ever going to be only one task at a time calling Apply
 
-        if (_intex + 1 != index)
+        if (_index + 1 != index)
         {
-            throw new InvalidOperationException($"The State Machine can only apply next command at index ${_intex + 1}");
+            throw new InvalidOperationException($"The State Machine can only apply next command at index ${_index + 1}");
         }
 
         int? result = command switch
@@ -35,7 +35,7 @@ public class CounterStateMachine : IStateMachine, ICounterState
             _ => throw new NotImplementedException($"The command type ${command?.GetType().Name} is not supported")
         };
 
-        _intex = index;
+        _index = index;
 
         return Task.FromResult<object?>(result);
     }

@@ -20,8 +20,8 @@ spec:
         image: zarusz/slimcluster_samples_service:latest
         imagePullPolicy: IfNotPresent # ensure we get always the fresh container image build
         ports:
-        - containerPort: 5000
+        - containerPort: 8080
         - containerPort: 60001
         env:
         - name: ASPNETCORE_URLS
-          value: "http://+:5000"
+          value: "http://+:8080"
