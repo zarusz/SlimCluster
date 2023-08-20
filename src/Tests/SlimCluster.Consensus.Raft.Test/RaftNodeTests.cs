@@ -170,7 +170,7 @@ public class RaftNodeTests : AbstractRaftIntegrationTest, IAsyncLifetime
                     x => x.SendRequest(
                         It.Is<AppendEntriesRequest>(r => r.Term == candidateTerm && r.LeaderId == _selfMember.Node.Id),
                         member.Node.Address,
-                        _options.LeaderTimeout),
+                        _options.LeaderPingInterval),
                     Times.Once);
             }
         }
@@ -226,12 +226,82 @@ public class RaftNodeTests : AbstractRaftIntegrationTest, IAsyncLifetime
         var idleRun = await _subject.OnLoopRunProxy(); // process the message arrived
 
         // assert
-        idleRun.Should().BeFalse(); // loop was not idle
+        idleRun.Should().BeFalse(); // loop was not idl
         _subject.Status.Should().Be(RaftNodeStatus.Follower); // still follower
         _subject.CurrentTerm.Should().Be(Math.Max(candidateTerm, currentTerm)); // next term was started
 
         // request votes for prev term
         _messageSenderMock.Verify(x => x.SendMessage(It.Is<RequestVoteResponse>(r => r.VoteGranted == voteGranted && r.Term == Math.Max(candidateTerm, currentTerm)), candidate.Address), Times.Once());
+        _messageSenderMock.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(0, 0, 1, 1)]
+    [InlineData(2, 1, 1, 1)]
+    [InlineData(2, 1, 2, 2)]
+    [InlineData(2, 1, 2, 3)]
+    public async Task Given_Follower_When_AppendEntriesRequest_Then_AddsToLocalLogs_And_AppliesToStateMachineWhenHigherCommitIndex(int currentIndex, int currentTerm, int newEntriesTerm, int leaderTerm)
+    {
+        // arrange
+        await _subject.OnLoopRunProxy();
+
+        // becomes follower
+
+        var currentCommitIndex = currentIndex;
+
+        // add to existin log entries
+        var logRepository = _logRepositoryMock.Object;
+
+        for (var i = 1; i <= currentIndex; i++)
+        {
+            await logRepository.Append(new[] { new LogEntry(i, currentTerm, _fixture.Create<byte[]>()) });
+        }
+        if (currentIndex > 0)
+        {
+            await logRepository.Commit(currentIndex);
+        }
+        _logRepositoryMock.Reset();
+
+        var leader = _otherMembers[1].Node;
+
+        var newEntry = new LogEntry(currentIndex + 1, newEntriesTerm, _fixture.Create<byte[]>());
+        var newEntries = new List<LogEntry> { newEntry };
+        // act                
+        await _subject.OnMessageArrived(
+            new AppendEntriesRequest
+            {
+                LeaderId = leader.Id,
+                LeaderCommitIndex = currentCommitIndex + 1,
+                Term = leaderTerm,
+                PrevLogIndex = currentIndex,
+                PrevLogTerm = currentTerm,
+                Entries = newEntries
+            },
+            leader.Address);
+
+        var idleRun = await _subject.OnLoopRunProxy(); // process the message arrived
+
+        // assert
+        idleRun.Should().BeFalse(); // loop was not idle
+
+        _subject.Status.Should().Be(RaftNodeStatus.Follower); // still follower
+        _subject.CurrentTerm.Should().Be(leaderTerm); // still same term
+
+        // checks if self logs are in the same term as the prev ones in the append request
+        if (currentCommitIndex > 0)
+        {
+            _logRepositoryMock.Verify(x => x.GetTermAtIndex(currentCommitIndex), Times.Once());
+        }
+        // appends the new entries
+        _logRepositoryMock.Verify(x => x.Append(It.Is<IEnumerable<LogEntry>>(a => a.Contains(newEntry))), Times.Once());
+        // commits the new log as it was commited by the leader
+        _logRepositoryMock.Verify(x => x.Commit(currentCommitIndex + 1), Times.Once());
+        _logRepositoryMock.Verify(x => x.GetLogsAtIndex(currentCommitIndex + 1, 1), Times.Once());
+        _logRepositoryMock.VerifyGet(x => x.LastIndex, Times.AtLeast(1));
+        _logRepositoryMock.VerifyGet(x => x.CommitedIndex, Times.AtLeast(1));
+        _logRepositoryMock.VerifyNoOtherCalls();
+
+        _messageSenderMock.Verify(x => x.SendMessage(It.Is<AppendEntriesResponse>(r => r.Success), leader.Address), Times.Once());
         _messageSenderMock.VerifyNoOtherCalls();
     }
 

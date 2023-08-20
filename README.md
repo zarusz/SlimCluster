@@ -44,6 +44,7 @@ The path to a stable production release:
 | `SlimCluster.Serialization.Json`    | JSON message serialization plugin          | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Serialization.Json.svg)](https://www.nuget.org/packages/SlimCluster.Serialization.Json)       |
 | `SlimCluster.Transport.Ip`          | IP protocol transport plugin               | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Transport.Ip.svg)](https://www.nuget.org/packages/SlimCluster.Transport.Ip)                   |
 | `SlimCluster.Persistence.LocalFile` | Persists node state into a local JSON file | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Persistence.LocalFile.svg)](https://www.nuget.org/packages/SlimCluster.Persistence.LocalFile) |
+| `SlimCluster.AspNetCore`            | ASP.NET request routing to Leader node     | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.AspNetCore.svg)](https://www.nuget.org/packages/SlimCluster.AspNetCore)                       |
 
 ## Samples
 
@@ -77,6 +78,12 @@ builder.Services.AddSlimCluster(cfg =>
     cfg.AddRaftConsensus(opts =>
     {
         opts.NodeCount = 3;
+
+        // Use custom values or remove and use defaults
+        opts.LeaderTimeout = TimeSpan.FromSeconds(5);
+        opts.LeaderPingInterval = TimeSpan.FromSeconds(2);
+        opts.ElectionTimeoutMin = TimeSpan.FromSeconds(3);
+        opts.ElectionTimeoutMax = TimeSpan.FromSeconds(6);
         // Can set a different log serializer, by default ISerializer is used (in our setup its JSON)
         // opts.LogSerializerType = typeof(JsonSerializer);
     });
@@ -86,6 +93,12 @@ builder.Services.AddSlimCluster(cfg =>
 
     // Cluster state will saved into the local json file in between node restarts
     cfg.AddPersistenceUsingLocalFile("cluster-state.json");
+
+    cfg.AddAspNetCore(opts =>
+    {
+        // Route all ASP.NET API requests for the Counter endpoint to the Leader node for handling
+        opts.DelegateRequestToLeader = r => r.Path.HasValue && r.Path.Value.Contains("/Counter");
+    });
 });
 
 // Raft app specific implementation

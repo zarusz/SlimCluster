@@ -17,7 +17,7 @@ public class RaftCluster : ICluster
 
     public IReadOnlyCollection<INode> OtherMembers => _clusterMembership.OtherMembers.Select(x => x.Node).ToList();
 
-    public INode? LeaderNode { get; protected set; }
+    public INode? LeaderNode => _raftNode.LeaderNode;
 
     public INode SelfNode => _clusterMembership.SelfMember.Node;
 
@@ -26,8 +26,6 @@ public class RaftCluster : ICluster
         _clusterMembership = clusterMembership;
         _raftNode = raftNode;
         ClusterId = clusterOptions.Value.ClusterId;
-        // ToDo: Update / Set leader when its known inside _raftNode
-        LeaderNode = null;
         // ToDo: Keep on updating the status
         Status = RaftClusterStatus.Initializing;
     }

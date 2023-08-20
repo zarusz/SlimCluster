@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net7.0</TargetFramework>
@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\SlimCluster.AspNetCore\SlimCluster.AspNetCore.csproj" />
     <ProjectReference Include="..\..\SlimCluster.Membership.Swim\SlimCluster.Membership.Swim.csproj" />
     <ProjectReference Include="..\..\SlimCluster.Serialization.Json\SlimCluster.Serialization.Json.csproj" />
     <ProjectReference Include="..\..\SlimCluster.Consensus.Raft\SlimCluster.Consensus.Raft.csproj" />

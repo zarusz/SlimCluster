@@ -20,9 +20,11 @@ public class CounterController : ControllerBase
     }
 
     [HttpGet()]
+    [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
     public int Get() => _counterState.Counter;
 
     [HttpPost("[action]")]
+    [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
     public async Task<int?> Increment(CancellationToken cancellationToken)
     {
         var result = await _clientRequestHandler.OnClientRequest(new IncrementCounterCommand(), cancellationToken);
@@ -30,6 +32,7 @@ public class CounterController : ControllerBase
     }
 
     [HttpPost("[action]")]
+    [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
     public async Task<int?> Decrement(CancellationToken cancellationToken)
     {
         var result = await _clientRequestHandler.OnClientRequest(new DecrementCounterCommand(), cancellationToken);
@@ -37,6 +40,7 @@ public class CounterController : ControllerBase
     }
 
     [HttpPost("[action]")]
+    [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
     public async Task<int?> Reset(CancellationToken cancellationToken)
     {
         var result = await _clientRequestHandler.OnClientRequest(new ResetCounterCommand(), cancellationToken);

@@ -29,12 +29,6 @@ public class RaftConsensusOptions
     public int NodeCount { get; set; }
 
     /// <summary>
-    /// Indicates wheather the Raft protocol should start as soon as the Raft Node is build by the conttainer.
-    /// When set to false, the User can start it manually.
-    /// </summary>
-    public bool AutoStart { get; set; } = true;
-
-    /// <summary>
     /// The service type that should be resolved from MSDI for Log Entry serialization.
     /// </summary>
     public Type LogSerializerType { get; set; } = typeof(ISerializer);

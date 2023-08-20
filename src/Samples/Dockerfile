@@ -8,10 +8,10 @@ COPY docs ./docs
 WORKDIR /source/src
 ARG SERVICE
 RUN dotnet publish "Samples/${SERVICE}" -c Release -o /app/publish
+RUN mv /app/publish/${SERVICE}.dll /app/publish/MainService.dll && \
+    mv /app/publish/${SERVICE}.runtimeconfig.json /app/publish/MainService.runtimeconfig.json
 
 FROM base AS final
 WORKDIR /app
 COPY --from=build /app/publish .
-ARG SERVICE
-ENV SERVICE_FILE "${SERVICE}.dll"
-ENTRYPOINT [ "/usr/bin/dotnet", "SlimCluster.Samples.Service.dll" ]
+ENTRYPOINT [ "/usr/bin/dotnet", "MainService.dll" ]

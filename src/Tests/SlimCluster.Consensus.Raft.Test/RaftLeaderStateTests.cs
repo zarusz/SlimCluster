@@ -81,27 +81,27 @@ public class RaftLeaderStateTests : AbstractRaftIntegrationTest, IAsyncLifetime
         await Task.Delay(TimeSpan.FromSeconds(1));
 
         _logRepositoryMock
-            .Verify(x => x.Append(_term, command), Times.Once);
+            .Verify(x => x.Append(_term, commandPayload), Times.Once);
 
         _messageSenderMock
             .Verify(x => x.SendRequest(
                 It.Is<AppendEntriesRequest>(r => r.PrevLogIndex == 0 && r.PrevLogTerm == 0 && r.Entries == null),
                 It.IsAny<IAddress>(),
-                _options.LeaderTimeout),
+                _options.LeaderPingInterval),
                 Times.AtLeast(_otherMembers.Count));
 
         _messageSenderMock
             .Verify(x => x.SendRequest(
-                It.Is<AppendEntriesRequest>(r => r.PrevLogIndex == 0 && r.PrevLogTerm == 0 && r.Entries != null && r.Entries.Count == 1 && r.Entries.Contains(commandPayload)),
+                It.Is<AppendEntriesRequest>(r => r.PrevLogIndex == 0 && r.PrevLogTerm == 0 && r.Entries != null && r.Entries.Count == 1 && r.Entries.First().Entry == commandPayload),
                 It.IsAny<IAddress>(),
-                _options.LeaderTimeout),
+                _options.LeaderPingInterval),
                 Times.Exactly(_otherMembers.Count));
 
         _messageSenderMock
             .Verify(x => x.SendRequest(
                 It.Is<AppendEntriesRequest>(r => r.PrevLogIndex == 1 && r.PrevLogTerm == 1 && r.Entries == null),
                 It.IsAny<IAddress>(),
-                _options.LeaderTimeout),
+                _options.LeaderPingInterval),
                 Times.AtLeast(_otherMembers.Count));
 
         _messageSenderMock

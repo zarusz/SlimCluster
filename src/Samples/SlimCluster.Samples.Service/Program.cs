@@ -1,4 +1,5 @@
 using SlimCluster;
+using SlimCluster.AspNetCore;
 using SlimCluster.Consensus.Raft;
 using SlimCluster.Consensus.Raft.Logs;
 using SlimCluster.Membership.Swim;
@@ -11,8 +12,6 @@ using SlimCluster.Serialization.Json;
 using SlimCluster.Transport.Ip;
 
 var builder = WebApplication.CreateBuilder(args);
-
-//builder.Host.UseConsoleLifetime();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -44,6 +43,12 @@ builder.Services.AddSlimCluster(cfg =>
     cfg.AddRaftConsensus(opts =>
     {
         opts.NodeCount = 3;
+
+        // Use custom values or remove and use defaults
+        opts.LeaderTimeout = TimeSpan.FromSeconds(5);
+        opts.LeaderPingInterval = TimeSpan.FromSeconds(2);
+        opts.ElectionTimeoutMin = TimeSpan.FromSeconds(3);
+        opts.ElectionTimeoutMax = TimeSpan.FromSeconds(6);
         // Can set a different log serializer, by default ISerializer is used (in our setup its JSON)
         // opts.LogSerializerType = typeof(JsonSerializer);
     });
@@ -53,6 +58,12 @@ builder.Services.AddSlimCluster(cfg =>
 
     // Cluster state will saved into the local json file in between node restarts
     cfg.AddPersistenceUsingLocalFile("cluster-state.json");
+
+    cfg.AddAspNetCore(opts =>
+    {
+        // Route all ASP.NET API requests for the Counter endpoint to the Leader node for handling
+        opts.DelegateRequestToLeader = r => r.Path.HasValue && r.Path.Value.Contains("/Counter");
+    });
 });
 
 // Raft app specific implementation
@@ -77,6 +88,9 @@ app.UseSwaggerUI();
 app.UseHttpsRedirection();
 
 app.UseAuthorization();
+
+// Delegate selected ASP.NET API requests to the leader node for handling
+app.UseClusterLeaderRequestDelegation();
 
 app.MapControllers();
 

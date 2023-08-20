@@ -33,7 +33,6 @@ public abstract class AbstractRaftIntegrationTest
 
         _options = new RaftConsensusOptions
         {
-            AutoStart = false,
             NodeCount = 3
         };
 

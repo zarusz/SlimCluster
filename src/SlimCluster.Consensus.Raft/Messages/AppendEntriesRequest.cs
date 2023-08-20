@@ -1,5 +1,7 @@
 ﻿namespace SlimCluster.Consensus.Raft;
 
+using SlimCluster.Consensus.Raft.Logs;
+
 public class AppendEntriesRequest : RaftMessage, IHasTerm, IRequest<AppendEntriesResponse>
 {
     /// <summary>
@@ -25,7 +27,7 @@ public class AppendEntriesRequest : RaftMessage, IHasTerm, IRequest<AppendEntrie
     /// <summary>
     /// New entries to add or null if ping message.
     /// </summary>
-    public IReadOnlyCollection<byte[]>? Entries { get; set; }
+    public IReadOnlyCollection<LogEntry>? Entries { get; set; }
 
-    public override string ToString() => $"{GetType().Name}(Term={Term},PrevLogIndex={PrevLogIndex},PrevLogTerm={PrevLogTerm})";
+    public override string ToString() => $"{GetType().Name}(Term={Term},PrevLogIndex={PrevLogIndex},PrevLogTerm={PrevLogTerm},Entries={Entries?.Count ?? 0})";
 }
