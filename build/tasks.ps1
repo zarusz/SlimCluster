@@ -27,7 +27,7 @@ $projects = @(
 	"SlimCluster.Transport",
 	"SlimCluster.Transport.Ip"
 
-	"SlimCluster.AspNetCore",
+	"SlimCluster.AspNetCore"
 )
 
 # msbuild.exe https://msdn.microsoft.com/pl-pl/library/ms164311(v=vs.80).aspx
