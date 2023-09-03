@@ -106,7 +106,7 @@ builder.Services.AddSingleton<ILogRepository, InMemoryLogRepository>(); // For n
 builder.Services.AddSingleton<IStateMachine, CounterStateMachine>(); // This is app specific machine that implements a distributed counter
 builder.Services.AddSingleton<ISerializationTypeAliasProvider, CommandSerializationTypeAliasProvider>(); // App specific state/logs command types for the replicated state machine
 
-// Requires packages: SlimCluster.Membership.Swim, SlimCluster.Consensus.Raft, SlimCluster.Serialization.Json, SlimCluster.Transport.Ip, SlimCluster.Persistence.LocalFile
+// Requires packages: SlimCluster.Membership.Swim, SlimCluster.Consensus.Raft, SlimCluster.Serialization.Json, SlimCluster.Transport.Ip, SlimCluster.Persistence.LocalFile, SlimCluster.AspNetCore
 ```
 
 Then somewhere in the micro-service, the [`ICluster`](src/SlimCluster/ICluster.cs) can be used:
