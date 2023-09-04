@@ -18,7 +18,7 @@ The strategic aim for SlimCluster is to implement other algorithms to make distr
 
 ## Roadmap
 
-> This is a new project and still a work in progress!
+> This a relatively new project!
 
 The path to a stable production release:
 
@@ -45,6 +45,10 @@ The path to a stable production release:
 | `SlimCluster.Transport.Ip`          | IP protocol transport plugin               | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Transport.Ip.svg)](https://www.nuget.org/packages/SlimCluster.Transport.Ip)                   |
 | `SlimCluster.Persistence.LocalFile` | Persists node state into a local JSON file | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Persistence.LocalFile.svg)](https://www.nuget.org/packages/SlimCluster.Persistence.LocalFile) |
 | `SlimCluster.AspNetCore`            | ASP.NET request routing to Leader node     | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.AspNetCore.svg)](https://www.nuget.org/packages/SlimCluster.AspNetCore)                       |
+
+## Docs
+
+- [Introduction](docs/intro.md)
 
 ## Samples
 

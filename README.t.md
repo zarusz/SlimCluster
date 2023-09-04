@@ -18,7 +18,7 @@ The strategic aim for SlimCluster is to implement other algorithms to make distr
 
 ## Roadmap
 
-> This is a new project and still a work in progress!
+> This a relatively new project!
 
 The path to a stable production release:
 
@@ -27,6 +27,10 @@ The path to a stable production release:
 - :white_check_mark: Step 3: Implement the Raft over TCP/UDP + sample.
 - :white_large_square: Step 4: Documentation on Raft consensus.
 - :white_large_square: Step 5: Other extensions and flavor.
+
+## Docs
+
+- [Introduction](docs/intro.md)
 
 ## Packages
 
