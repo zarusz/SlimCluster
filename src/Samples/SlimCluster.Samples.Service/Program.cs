@@ -33,6 +33,12 @@ builder.Services.AddSlimCluster(cfg =>
         opts.MulticastGroupAddress = builder.Configuration.GetValue<string>("UdpMulticastGroupAddress")!;
     });
 
+    // Protocol messages (and logs/commands) will be serialized using JSON
+    cfg.AddJsonSerialization();
+
+    // Cluster state will saved into the local json file in between node restarts
+    cfg.AddPersistenceUsingLocalFile("cluster-state.json");
+
     // Setup Swim Cluster Membership
     cfg.AddSwimMembership(opts =>
     {
@@ -52,12 +58,6 @@ builder.Services.AddSlimCluster(cfg =>
         // Can set a different log serializer, by default ISerializer is used (in our setup its JSON)
         // opts.LogSerializerType = typeof(JsonSerializer);
     });
-
-    // Protocol messages (and logs/commands) will be serialized using JSON
-    cfg.AddJsonSerialization();
-
-    // Cluster state will saved into the local json file in between node restarts
-    cfg.AddPersistenceUsingLocalFile("cluster-state.json");
 
     cfg.AddAspNetCore(opts =>
     {
