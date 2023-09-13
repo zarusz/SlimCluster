@@ -28,6 +28,10 @@ The path to a stable production release:
 - :white_large_square: Step 4: Documentation on Raft consensus.
 - :white_large_square: Step 5: Other extensions and flavor.
 
+## Docs
+
+- [Introduction](docs/intro.md)
+
 ## Packages
 
 | Name                                | Description                                | NuGet                                                                                                                                              |
@@ -45,10 +49,6 @@ The path to a stable production release:
 | `SlimCluster.Transport.Ip`          | IP protocol transport plugin               | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Transport.Ip.svg)](https://www.nuget.org/packages/SlimCluster.Transport.Ip)                   |
 | `SlimCluster.Persistence.LocalFile` | Persists node state into a local JSON file | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.Persistence.LocalFile.svg)](https://www.nuget.org/packages/SlimCluster.Persistence.LocalFile) |
 | `SlimCluster.AspNetCore`            | ASP.NET request routing to Leader node     | [![NuGet](https://img.shields.io/nuget/v/SlimCluster.AspNetCore.svg)](https://www.nuget.org/packages/SlimCluster.AspNetCore)                       |
-
-## Docs
-
-- [Introduction](docs/intro.md)
 
 ## Samples
 
@@ -72,6 +72,12 @@ builder.Services.AddSlimCluster(cfg =>
         opts.MulticastGroupAddress = builder.Configuration.GetValue<string>("UdpMulticastGroupAddress")!;
     });
 
+    // Protocol messages (and logs/commands) will be serialized using JSON
+    cfg.AddJsonSerialization();
+
+    // Cluster state will saved into the local json file in between node restarts
+    cfg.AddPersistenceUsingLocalFile("cluster-state.json");
+
     // Setup Swim Cluster Membership
     cfg.AddSwimMembership(opts =>
     {
@@ -91,12 +97,6 @@ builder.Services.AddSlimCluster(cfg =>
         // Can set a different log serializer, by default ISerializer is used (in our setup its JSON)
         // opts.LogSerializerType = typeof(JsonSerializer);
     });
-
-    // Protocol messages (and logs/commands) will be serialized using JSON
-    cfg.AddJsonSerialization();
-
-    // Cluster state will saved into the local json file in between node restarts
-    cfg.AddPersistenceUsingLocalFile("cluster-state.json");
 
     cfg.AddAspNetCore(opts =>
     {
