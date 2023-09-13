@@ -239,7 +239,7 @@ In Raft algorithm each log entry has an:
 - Index that represents its position and defines the order of when it happend (starts from 1)
 - Term that represents a virtual integer time that is advanced with every leader election (starts from 1).
 
-In the case of a distributed counter such commands could be `IncrementCounterCommand`, `DecrementCounterCommand`, `ResetCounterCommand`, while the state (state machine) represents the current counter value as observed by the leader (and other members of the cluster).
+In the case of a distributed counter such commands could be `IncrementCounterCommand`, `DecrementCounterCommand`, `ResetCounterCommand`, while the state (state machine) represents the current counter value as observed by the leader (and eventually other members of the cluster).
 
 ### Logs Compaction
 
