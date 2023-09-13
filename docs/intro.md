@@ -133,12 +133,12 @@ Depending on the plugins and configuration used, such state might include:
 - Last known leader
 - Algorithm state (Raft, SWIM)
 
-While this is not required, it allows the restarted (or crushed) Node to faster catch up with the other members in the Cluster and converge into the correct cluster state.
+While this is not required, it allows the restarted (or crushed) Node to catch up faster with the other members in the Cluster, and converge into the correct cluster state.
 
 Currently the only possible option is LocalFile which stores the state in an local JSON file.
 In the near future there are plans to add some connectors to Cloud Provider storage offerings (Azure, AWS, GCP).
 
-To write a custom state persitence strategy, simply provide and implementation for [IClusterPersistenceService](../src/SlimCluster.Persistence/IClusterPersistenceService.cs) in the MSDI container.
+To write a custom state persitence strategy, simply provide an implementation for [IClusterPersistenceService](../src/SlimCluster.Persistence/IClusterPersistenceService.cs) in the MSDI container.
 
 ## Local File Persistence
 
