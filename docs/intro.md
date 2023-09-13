@@ -14,6 +14,8 @@
 - [Cluster Consensus](#cluster-consensus)
   - [Raft Consensus](#raft-consensus)
     - [Logs](#logs)
+    - [Logs Compaction](#logs-compaction)
+    - [Logs Storage](#logs-storage)
     - [State Machine](#state-machine)
     - [Configuration Parameters](#configuration-parameters)
   - [Leader Request Delegation ASP.NET Core Middleware](#leader-request-delegation-aspnet-core-middleware)
@@ -138,7 +140,7 @@ While this is not required, it allows the restarted (or crushed) Node to catch u
 Currently the only possible option is LocalFile which stores the state in an local JSON file.
 In the near future there are plans to add some connectors to Cloud Provider storage offerings (Azure, AWS, GCP).
 
-To write a custom state persitence strategy, simply provide an implementation for [IClusterPersistenceService](../src/SlimCluster.Persistence/IClusterPersistenceService.cs) in the MSDI container.
+To write a custom state persitence strategy, simply provide an implementation for [IClusterPersistenceService](../src/SlimCluster.Persistence/IClusterPersistenceService.cs) in the MSDI container. The service implementation needs to collect the state from all the container managed [IDurableComponent](../src/SlimCluster.Persistence/IDurableComponent.cs) (inject `IEnumerable<IDurableComponent>`).
 
 ## Local File Persistence
 
@@ -195,24 +197,80 @@ Consensus allows to coordinate the nodes that form the cluster. It helps to mana
 Package: [SlimCluster.Consensus.Raft](https://www.nuget.org/packages/SlimCluster.Consensus.Raft)
 
 Raft consensus algorithm is one of the newer algorithms that has become popular due to its simplicity and flexibility.
-The [Raft paper](https://raft.github.io/raft.pdf) is an excelent source to undersand more details and about the algorithm parameters that can be fine tuned in SlimCluster.
+The [Raft paper](https://raft.github.io/raft.pdf) is an excelent source to undersand more details about the algorithm, and the parameters that can be fine tuned in SlimCluster.
 
 At a high level the Raft consensus is:
 
-- Storing and replicating logs (Replicated Logs).
+- Storing and replicating logs to all cluster nodes (Replicated Logs).
 - Electing a leader node that is responsible for log replication to follower nodes (Leader Election).
 - Leader applies the logs to its own state machine (and followers) when logs have been replicated to the majority of nodes (Replicated State Machine).
 - The state machine represents cluster state that is observed by the leader & majority.
 - Logs represent commands that mutate cluster state.
 
-From the SlimCluster perspective, the logs (command) and state machione can be anything that is relevant to the application domain problem in question.
+From the SlimCluster perspective, the logs (commands) and state machine can be anything that is relevant to the application domain problem in question.
 This is the part that you have to customize to meet the particular use case (examples further on).
+
+To add the Raft plugin register it:
+
+```cs
+// Setup Raft Cluster Consensus
+cfg.AddRaftConsensus(opts =>
+{
+    opts.NodeCount = 3;
+
+    // Use custom values or remove and use defaults
+    opts.LeaderTimeout = TimeSpan.FromSeconds(5);
+    opts.LeaderPingInterval = TimeSpan.FromSeconds(2);
+    opts.ElectionTimeoutMin = TimeSpan.FromSeconds(3);
+    opts.ElectionTimeoutMax = TimeSpan.FromSeconds(6);
+
+    // Can set a different log serializer, by default ISerializer is used (in our setup its JSON)
+    // opts.LogSerializerType = typeof(JsonSerializer);
+});
+```
 
 ### Logs
 
-ToDo
+Logs represent operations (commands) that perform state change within the [replicated state machine](#state-machine).
+Think about them as commands that mutate state, which need to be executed in order to reproduce the current state of the state machine.
 
-> Log compaction is not yet supported.
+In Raft algorithm each log entry has an:
+
+- Index that represents its position and defines the order of when it happend (starts from 1)
+- Term that represents a virtual integer time that is advanced with every leader election (starts from 1).
+
+In the case of a distributed counter such commands could be `IncrementCounterCommand`, `DecrementCounterCommand`, `ResetCounterCommand`, while the state (state machine) represents the current counter value as observed by the leader (and other members of the cluster).
+
+### Logs Compaction
+
+Over time the logs grow in size and in certain moments a snapshot at index `N` is being taken to capture the state machine value (up to `N`)
+With that `N-1` logs are removed to save on space. That process is called log compaction (or snapshoting).
+
+Thanks to this, between node restarts the cluster leader can send the new joined follower the most recent state snapshot, along with the new logs that happened after that. This allows new followers to quickly catch up to the cluster state.
+
+> Log compaction is not yet supported, but will come soon.
+
+### Logs Storage
+
+The Raft implementation requires a registered `ILogRepository` service implementation to represent storage stategy.
+
+Currently, the only option is `InMemoryLogRepository`, which means the logs are stored in memory.
+The in-memory strategy can be set up like this:
+
+```cs
+services.AddSingleton<ILogRepository, InMemoryLogRepository>(); // For now, store the logs in memory only
+```
+
+What is important that the custom commands (e.g. `IncrementCounterCommand`) need to be serializable by the [chosen serialization plugin](#serialization).
+Alternatively if you want to serialize the custom commands (app specific commands) with a different serializer then, you can set the type to look up in the MSDI:
+
+```
+cfg.AddRaftConsensus(opts =>
+{
+    // Can set a different log serializer, by default ISerializer is used (in our setup its JSON)
+    opts.LogSerializerType = typeof(JsonSerializer);
+});
+```
 
 ### State Machine
 
