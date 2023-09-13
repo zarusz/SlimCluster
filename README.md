@@ -23,9 +23,9 @@ The strategic aim for SlimCluster is to implement other algorithms to make distr
 The path to a stable production release:
 
 - :white_check_mark: Step 1: Implement the SWIM membership over UDP + sample.
-- :white_large_square: Step 2: Documentation on SWIM membership.
+- :white_check_mark: Step 2: Documentation on Raft consensus.
 - :white_check_mark: Step 3: Implement the Raft over TCP/UDP + sample.
-- :white_large_square: Step 4: Documentation on Raft consensus.
+- :white_large_square: Step 4: Documentation on SWIM membership.
 - :white_large_square: Step 5: Other extensions and flavor.
 
 ## Docs
