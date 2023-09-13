@@ -82,13 +82,13 @@ Currently the only possible transport option is IP protocol, where the inter-Nod
 
 Package: [SlimCluster.Transport.Ip](https://www.nuget.org/packages/SlimCluster.Transport.Ip)
 
-Configures SlimCluster to use the IP/UDP protocol for inter-Node communication.
+Configures SlimCluster to use the IP/UDP protocol for inter-node communication.
 
 ```cs
 cfg.AddIpTransport(opts =>
 {
-    opts.Port = builder.Configuration.GetValue<int>("UdpPort");
-    opts.MulticastGroupAddress = builder.Configuration.GetValue<string>("UdpMulticastGroupAddress")!;
+    opts.Port = 60001;
+    opts.MulticastGroupAddress = "239.1.1.1";
 });
 ```
 
@@ -111,7 +111,7 @@ Serialization is needed for protocol messages for inter-Node communication.
 Currently the only possible serialization option is JSON.
 In the near future there are plans to add [ProtoBuf](https://github.com/protocolbuffers/protobuf) binary serialization for performance and payload size optimization.
 
-To write a custom serializer, simply provide and implementation for [ISerializer](../src/SlimCluster.Serialization/ISerializer.cs) in the MSDI container.
+To write a custom serializer, simply provide an implementation for [ISerializer](../src/SlimCluster.Serialization/ISerializer.cs) in the MSDI container.
 
 ## JSON Serialization
 
