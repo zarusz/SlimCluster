@@ -26,7 +26,7 @@ The path to a stable production release:
 - :white_check_mark: Step 2: Documentation on Raft consensus.
 - :white_check_mark: Step 3: Implement the Raft over TCP/UDP + sample.
 - :white_large_square: Step 4: Documentation on SWIM membership.
-- :white_large_square: Step 5: Other extensions and flavor.
+- :white_large_square: Step 5: Other extensions and plugins.
 
 ## Docs
 
