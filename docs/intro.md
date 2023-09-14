@@ -261,8 +261,8 @@ The in-memory strategy can be set up like this:
 services.AddSingleton<ILogRepository, InMemoryLogRepository>(); // For now, store the logs in memory only
 ```
 
-What is important that the custom commands (e.g. `IncrementCounterCommand`) need to be serializable by the [chosen serialization plugin](#serialization).
-Alternatively if you want to serialize the custom commands (app specific commands) with a different serializer then, you can set the type to look up in the MSDI:
+What is important that the logs (e.g. custom commands `IncrementCounterCommand`) need to be seriali3zable by the [chosen serialization plugin](#serialization).
+Alternatively, if you want to serialize the custom commands (app specific commands) with a different serializer then, you can set the type to look up in the MSDI:
 
 ```
 cfg.AddRaftConsensus(opts =>
@@ -274,12 +274,65 @@ cfg.AddRaftConsensus(opts =>
 
 ### State Machine
 
-ToDo
+Raft relies on a state machine which is able o execute logs (commands) and hence produce state.
+The state machine is being evaluated on every node on the cluster (not only the leader node). All node state machines eventually up in the same state across leader and follower nodes.
+
+Leader is the one that decides up to what log (command) should be applied against the state machine. A log is applied onto the state machine if the log has been replicated by the leader to a majority of nodes in the cluster.
+
+The state machine represents your custom domain problem that, and works with the custom logs (commands) that are relevant for the state machine.
+For example if we are building a distributed counter, then the state machine is able to handle IncrementCounterCommand, DecrementCounterCommand, etc. The evaluation of each command, causes the counter increments, decrements.
+
+The Raft implementation required an implementation of the [`IStateMachine`](../src/SlimCluster.Consensus.Raft/StateMachine/IStateMachine.cs) to be registerd in MSDI.
+
+```cs
+builder.Services.AddSingleton<IStateMachine, CounterStateMachine>(); // This is app specific machine that implements a distributed counter
+```
+
+The implementation for the `CounterStateMachine` could look like this:
+
+```cs
+public class CounterStateMachine : IStateMachine, ICounterState
+{
+    private int _index = 0;
+    private int _counter = 0;
+
+    public int CurrentIndex => _index;
+
+    /// <summary>
+    /// The counter value
+    /// </summary>
+    public int Counter => _counter;
+
+    public Task<object?> Apply(object command, int index)
+    {
+        // Note: This is thread safe - there is ever going to be only one task at a time calling Apply
+
+        if (_index + 1 != index)
+        {
+            throw new InvalidOperationException($"The State Machine can only apply next command at index ${_index + 1}");
+        }
+
+        int? result = command switch
+        {
+            IncrementCounterCommand => ++_counter,
+            DecrementCounterCommand => --_counter,
+            ResetCounterCommand => _counter = 0,
+            _ => throw new NotImplementedException($"The command type ${command?.GetType().Name} is not supported")
+        };
+
+        _index = index;
+
+        return Task.FromResult<object?>(result);
+    }
+}
+```
 
 ### Configuration Parameters
 
 ToDo
 
 ## Leader Request Delegation ASP.NET Core Middleware
+
+Package: [SlimCluster.AspNetCore](https://www.nuget.org/packages/SlimCluster.AspNetCore)
 
 ToDo
