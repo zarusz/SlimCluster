@@ -261,10 +261,10 @@ The in-memory strategy can be set up like this:
 services.AddSingleton<ILogRepository, InMemoryLogRepository>(); // For now, store the logs in memory only
 ```
 
-What is important that the logs (e.g. custom commands `IncrementCounterCommand`) need to be seriali3zable by the [chosen serialization plugin](#serialization).
+What is important that the logs (e.g. custom commands `IncrementCounterCommand`) need to be serializable by the [chosen serialization plugin](#serialization).
 Alternatively, if you want to serialize the custom commands (app specific commands) with a different serializer then, you can set the type to look up in the MSDI:
 
-```
+```cs
 cfg.AddRaftConsensus(opts =>
 {
     // Can set a different log serializer, by default ISerializer is used (in our setup its JSON)
@@ -274,10 +274,12 @@ cfg.AddRaftConsensus(opts =>
 
 ### State Machine
 
-Raft relies on a state machine which is able o execute logs (commands) and hence produce state.
-The state machine is being evaluated on every node on the cluster (not only the leader node). All node state machines eventually up in the same state across leader and follower nodes.
+Raft relies on a state machine which is able to execute logs (commands) and hence produce state.
+The state machine is being evaluated on every node on the cluster (not only the leader node).
+All node state machines eventually end up in the same state across leader and follower nodes.
 
-Leader is the one that decides up to what log (command) should be applied against the state machine. A log is applied onto the state machine if the log has been replicated by the leader to a majority of nodes in the cluster.
+Leader is the one that decides up to what log index should be applied against the state machine.
+A log at index `N` is applied onto the state machine if the log at index `N` (and all before it) hve been replicated by the leader to a majority of nodes in the cluster.
 
 The state machine represents your custom domain problem that, and works with the custom logs (commands) that are relevant for the state machine.
 For example if we are building a distributed counter, then the state machine is able to handle IncrementCounterCommand, DecrementCounterCommand, etc. The evaluation of each command, causes the counter increments, decrements.
@@ -291,7 +293,7 @@ builder.Services.AddSingleton<IStateMachine, CounterStateMachine>(); // This is 
 The implementation for the `CounterStateMachine` could look like this:
 
 ```cs
-public class CounterStateMachine : IStateMachine, ICounterState
+public class CounterStateMachine : IStateMachine
 {
     private int _index = 0;
     private int _counter = 0;
@@ -329,7 +331,27 @@ public class CounterStateMachine : IStateMachine, ICounterState
 
 ### Configuration Parameters
 
-ToDo
+Raft configuration parameters refer to the properties inside the `opts` object (of type [RaftConsensusOptions](../src/SlimCluster.Consensus.Raft/Configuration/RaftConsensusOptions.cs)):
+
+```cs
+// Setup Raft Cluster Consensus
+cfg.AddRaftConsensus(opts =>
+{
+    opts.NodeCount = 3;
+
+    // Use custom values or remove and use defaults
+    opts.LeaderTimeout = TimeSpan.FromSeconds(5);
+    opts.LeaderPingInterval = TimeSpan.FromSeconds(2);
+    opts.ElectionTimeoutMin = TimeSpan.FromSeconds(3);
+    opts.ElectionTimeoutMax = TimeSpan.FromSeconds(6);
+});
+```
+
+- `NodeCount` sets the expected node count of the cluster. This is needed to be able to calculate the majority of nodes.
+- `LeaderTimeout` the time after which the leader is considered crashed/gone/unreliable/failed when no messages arrive from the leader to the follower node.
+- `LeaderPingInterval` the maximum round trip time the leader sends AppendEntriesRequest and until it has to get the AppendEntriesResponse back from the follower. This has to be big enough to allow for the network round trip, as well as for the leader and follower to process the message. This time should be significantly smaller than `LeaderTimeout`.
+- `ElectionTimeoutMin` the minimum time at which the election could time out if the candidate did not collect a majority of votes.
+- `ElectionTimeoutMax` thge maximum time at which the eelection could time out if the candidate did not collect a majority of votes. Each new election started by node `N` initalizes its election timeout to a random time span between the min and max values.
 
 ## Leader Request Delegation ASP.NET Core Middleware
 
