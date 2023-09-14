@@ -351,7 +351,7 @@ cfg.AddRaftConsensus(opts =>
 - `LeaderTimeout` the time after which the leader is considered crashed/gone/unreliable/failed when no messages arrive from the leader to the follower node.
 - `LeaderPingInterval` the maximum round trip time the leader sends AppendEntriesRequest and until it has to get the AppendEntriesResponse back from the follower. This has to be big enough to allow for the network round trip, as well as for the leader and follower to process the message. This time should be significantly smaller than `LeaderTimeout`.
 - `ElectionTimeoutMin` the minimum time at which the election could time out if the candidate did not collect a majority of votes.
-- `ElectionTimeoutMax` thge maximum time at which the eelection could time out if the candidate did not collect a majority of votes. Each new election started by node `N` initalizes its election timeout to a random time span between the min and max values.
+- `ElectionTimeoutMax` the maximum time at which the election could time out if the candidate did not collect a majority of votes. Each new election started by node `N` initalizes its election timeout to a random time span between the min and max values.
 
 ## Leader Request Delegation ASP.NET Core Middleware
 
