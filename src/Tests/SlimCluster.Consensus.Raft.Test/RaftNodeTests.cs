@@ -204,7 +204,7 @@ public class RaftNodeTests : AbstractRaftIntegrationTest, IAsyncLifetime
     [Theory]
     [InlineData(0, 3, true)]
     [InlineData(0, 1, false)]
-    [InlineData(1, 1, false)]
+    [InlineData(1, 1, true)]  // higher last-log term beats higher index per Raft §5.4.1
     [InlineData(1, 3, true)]
     [InlineData(3, 3, true)]
     public async Task Given_Follower_When_RequestVoteRequest_Then_GrantsVote_IfHigherTerm_And_LogAtLeastAsFresh(int candidateTerm, int candidateIndex, bool voteGranted)
@@ -230,7 +230,6 @@ public class RaftNodeTests : AbstractRaftIntegrationTest, IAsyncLifetime
         _subject.Status.Should().Be(RaftNodeStatus.Follower); // still follower
         _subject.CurrentTerm.Should().Be(Math.Max(candidateTerm, currentTerm)); // next term was started
 
-        // request votes for prev term
         _messageSenderMock.Verify(x => x.SendMessage(It.Is<RequestVoteResponse>(r => r.VoteGranted == voteGranted && r.Term == Math.Max(candidateTerm, currentTerm)), candidate.Address), Times.Once());
         _messageSenderMock.VerifyNoOtherCalls();
     }
@@ -313,5 +312,198 @@ public class RaftNodeTests : AbstractRaftIntegrationTest, IAsyncLifetime
         _now = _now.Add(_options.LeaderTimeout).AddSeconds(1); // advance time
         await _subject.OnLoopRunProxy();
         // becomes a candidate
+    }
+
+    // -----------------------------------------------------------------------
+    // Vote granting — Raft §5.4.1 log up-to-date rule
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Candidate whose last log term is HIGHER than ours must be granted the vote
+    /// regardless of log length — the term comparison takes absolute precedence.
+    /// </summary>
+    [Theory]
+    // (ourTerm, ourIndex, candidateTerm, candidateIndex, expected)
+    [InlineData(1, 5, 2, 1, true)]   // higher candidate term wins even with shorter log
+    [InlineData(1, 5, 2, 5, true)]   // higher candidate term, equal index
+    [InlineData(1, 5, 2, 6, true)]   // higher candidate term, longer index
+    [InlineData(2, 5, 1, 10, false)]  // lower candidate term must be rejected even with longer log
+    [InlineData(2, 5, 2, 4, false)]  // same term, shorter log — reject
+    [InlineData(2, 5, 2, 5, true)]   // same term, equal index — grant
+    [InlineData(2, 5, 2, 6, true)]   // same term, longer log — grant
+    public async Task Given_Follower_When_RequestVoteRequest_Then_VoteGranted_AccordingTo_Raft_LogUpToDateRule(
+        int ourTerm, int ourIndex, int candidateTerm, int candidateIndex, bool expectedGranted)
+    {
+        // arrange: start as follower in ourTerm
+        _logRepositoryMock.SetupGet(x => x.LastIndex).Returns(new LogIndex(ourIndex, ourTerm));
+
+        // Put node in follower state at ourTerm
+        await _subject.OnLoopRunProxy();
+        // Advance to ourTerm by simulating an AppendEntries from a leader
+        if (ourTerm > 0)
+        {
+            var leader = _otherMembers[1].Node;
+            await _subject.OnMessageArrived(
+                new AppendEntriesRequest { Term = ourTerm, LeaderId = leader.Id, PrevLogIndex = 0, PrevLogTerm = 0 },
+                leader.Address);
+            await _subject.OnLoopRunProxy();
+        }
+        _messageSenderMock.Invocations.Clear();
+
+        var candidate = _otherMembers[0].Node;
+
+        // act
+        await _subject.OnMessageArrived(
+            new RequestVoteRequest
+            {
+                CandidateId = candidate.Id,
+                Term = candidateTerm,
+                LastLogIndex = candidateIndex,
+                LastLogTerm = candidateTerm
+            },
+            candidate.Address);
+        await _subject.OnLoopRunProxy();
+
+        // assert
+        _messageSenderMock.Verify(
+            x => x.SendMessage(
+                It.Is<RequestVoteResponse>(r => r.VoteGranted == expectedGranted),
+                candidate.Address),
+            Times.Once());
+    }
+
+    /// <summary>
+    /// A node must not grant a second vote in the same term once it has already voted.
+    /// </summary>
+    [Fact]
+    public async Task Given_Follower_AlreadyVotedInTerm_When_DifferentCandidateRequests_Then_VoteNotGranted()
+    {
+        // arrange
+        await _subject.OnLoopRunProxy(); // become follower
+
+        var currentTerm = _subject.CurrentTerm;
+        _logRepositoryMock.SetupGet(x => x.LastIndex).Returns(new LogIndex(0, 0));
+
+        var firstCandidate = _otherMembers[0].Node;
+        var secondCandidate = _otherMembers[1].Node;
+
+        // Vote for first candidate
+        await _subject.OnMessageArrived(
+            new RequestVoteRequest { CandidateId = firstCandidate.Id, Term = currentTerm + 1, LastLogIndex = 0, LastLogTerm = 0 },
+            firstCandidate.Address);
+        await _subject.OnLoopRunProxy();
+
+        _messageSenderMock.Verify(
+            x => x.SendMessage(It.Is<RequestVoteResponse>(r => r.VoteGranted), firstCandidate.Address),
+            Times.Once());
+
+        _messageSenderMock.Invocations.Clear();
+
+        // act: second candidate requests vote in the same term
+        await _subject.OnMessageArrived(
+            new RequestVoteRequest { CandidateId = secondCandidate.Id, Term = currentTerm + 1, LastLogIndex = 0, LastLogTerm = 0 },
+            secondCandidate.Address);
+        await _subject.OnLoopRunProxy();
+
+        // assert: vote denied
+        _messageSenderMock.Verify(
+            x => x.SendMessage(It.Is<RequestVoteResponse>(r => !r.VoteGranted), secondCandidate.Address),
+            Times.Once());
+    }
+
+    /// <summary>
+    /// A node that already voted in term T may vote again if it receives a request for term T+1
+    /// (UpdateTerm resets _votedFor).
+    /// </summary>
+    [Fact]
+    public async Task Given_Follower_AlreadyVotedInTerm_When_SameOrHigherTermRequest_Then_CanVoteAgain()
+    {
+        // arrange
+        await _subject.OnLoopRunProxy(); // become follower
+        _logRepositoryMock.SetupGet(x => x.LastIndex).Returns(new LogIndex(0, 0));
+
+        var candidate1 = _otherMembers[0].Node;
+        var candidate2 = _otherMembers[1].Node;
+        var term1 = _subject.CurrentTerm + 1;
+
+        // Vote in term1
+        await _subject.OnMessageArrived(
+            new RequestVoteRequest { CandidateId = candidate1.Id, Term = term1, LastLogIndex = 0, LastLogTerm = 0 },
+            candidate1.Address);
+        await _subject.OnLoopRunProxy();
+        _messageSenderMock.Invocations.Clear();
+
+        // act: different candidate requests vote for term1+1 — node's term advances, _votedFor resets
+        await _subject.OnMessageArrived(
+            new RequestVoteRequest { CandidateId = candidate2.Id, Term = term1 + 1, LastLogIndex = 0, LastLogTerm = 0 },
+            candidate2.Address);
+        await _subject.OnLoopRunProxy();
+
+        // assert: vote granted in new term
+        _messageSenderMock.Verify(
+            x => x.SendMessage(It.Is<RequestVoteResponse>(r => r.VoteGranted), candidate2.Address),
+            Times.Once());
+    }
+
+    // -----------------------------------------------------------------------
+    // AppendEntries — stale term rejection
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Given_Follower_When_AppendEntriesWithLowerTerm_Then_Rejected()
+    {
+        // arrange: become follower in a higher term first
+        await _subject.OnLoopRunProxy();
+        var leader = _otherMembers[1].Node;
+        _logRepositoryMock.SetupGet(x => x.LastIndex).Returns(new LogIndex(0, 0));
+
+        // Advance to term 3 via an AppendEntries
+        await _subject.OnMessageArrived(
+            new AppendEntriesRequest { Term = 3, LeaderId = leader.Id, PrevLogIndex = 0, PrevLogTerm = 0 },
+            leader.Address);
+        await _subject.OnLoopRunProxy();
+        _messageSenderMock.Invocations.Clear();
+
+        // act: stale AppendEntries from term 1
+        var staleSender = _otherMembers[0].Node;
+        await _subject.OnMessageArrived(
+            new AppendEntriesRequest { Term = 1, LeaderId = staleSender.Id, PrevLogIndex = 0, PrevLogTerm = 0 },
+            staleSender.Address);
+        await _subject.OnLoopRunProxy();
+
+        // assert: rejected (Success=false) and current higher term returned
+        _messageSenderMock.Verify(
+            x => x.SendMessage(
+                It.Is<AppendEntriesResponse>(r => !r.Success && r.Term == 3),
+                staleSender.Address),
+            Times.Once());
+    }
+
+    // -----------------------------------------------------------------------
+    // Follower: leader timeout resets when heartbeat arrives
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Given_Follower_When_AppendEntriesArrives_Then_ElectionTimerResets_And_StaysFollower()
+    {
+        // arrange
+        await _subject.OnLoopRunProxy(); // become follower
+        _logRepositoryMock.SetupGet(x => x.LastIndex).Returns(new LogIndex(0, 0));
+
+        var leader = _otherMembers[1].Node;
+
+        // Advance time past leader timeout
+        _now = _now.Add(_options.LeaderTimeout).AddSeconds(1);
+
+        // But deliver a heartbeat before DoRun processes the timeout
+        await _subject.OnMessageArrived(
+            new AppendEntriesRequest { Term = _subject.CurrentTerm, LeaderId = leader.Id, PrevLogIndex = 0, PrevLogTerm = 0 },
+            leader.Address);
+
+        // act
+        var idleRun = await _subject.OnLoopRunProxy();
+
+        // assert: stays follower, does not become candidate
+        _subject.Status.Should().Be(RaftNodeStatus.Follower);
     }
 }

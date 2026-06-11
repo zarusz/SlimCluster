@@ -3,11 +3,20 @@
   <Import Project="Common.Properties.xml" />
 
   <PropertyGroup>
-    <Version>0.9.0</Version>
+    <Version>1.0.0</Version>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageReadmeFile>NuGet.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
+    <!-- SourceLink: embed source info so IDE users can step into library source from NuGet -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All"/>
+  </ItemGroup>
 
   <ItemGroup>
     <None Include="..\..\docs\NuGet.md" Pack="true" PackagePath="\"/>

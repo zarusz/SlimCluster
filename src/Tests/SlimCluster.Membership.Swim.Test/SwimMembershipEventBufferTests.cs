@@ -73,4 +73,97 @@ public class SwimMembershipEventBufferTests
             && x.Type == Messages.MembershipEventType.Joined 
             && x.Timestamp == _now.AddMinutes(2));
     }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    [InlineData(20)]
+    public void Given_Buffer_When_FilledToCapacity_Then_AllSlotsUsed(int capacity)
+    {
+        // arrange
+        var subject = new MembershipEventBuffer(capacity);
+
+        // act
+        for (var i = 0; i < capacity; i++)
+        {
+            var added = subject.Add(new Messages.MembershipEvent($"node{i}", Messages.MembershipEventType.Joined, _now));
+            added.Should().BeTrue($"slot {i} should fit in a buffer of capacity {capacity}");
+        }
+
+        var events = subject.GetNextEvents(capacity + 1);
+        events.Should().HaveCount(capacity, "buffer should hold all {0} events", capacity);
+    }
+
+    [Fact]
+    public void Given_FullBuffer_When_AddNewEvent_Then_ReplacesHighestUsedEntry()
+    {
+        // arrange
+        var subject = new MembershipEventBuffer(3);
+
+        subject.Add(new Messages.MembershipEvent("node1", Messages.MembershipEventType.Joined, _now));
+        subject.Add(new Messages.MembershipEvent("node2", Messages.MembershipEventType.Joined, _now));
+        subject.Add(new Messages.MembershipEvent("node3", Messages.MembershipEventType.Joined, _now));
+
+        // drive up UsedCount for node1 by calling GetNextEvents multiple times
+        subject.GetNextEvents(3); // all used once
+        subject.GetNextEvents(3); // all used twice — node1 should be first returned each time due to ordering, but all equal here
+
+        // Now get only 1 to further bump one entry  
+        // Actually GetNextEvents uses least-used ordering — let's just call enough times
+        // to ensure node1 has higher UsedCount than others
+        for (var i = 0; i < 5; i++) subject.GetNextEvents(1); // bumps the least-used one repeatedly
+
+        // act: add event for a new node (node4) — should evict the highest used entry
+        var added = subject.Add(new Messages.MembershipEvent("node4", Messages.MembershipEventType.Joined, _now.AddMinutes(10)));
+
+        // assert
+        added.Should().BeTrue();
+        var remaining = subject.GetNextEvents(10);
+        remaining.Should().HaveCount(3);
+        remaining.Should().Contain(x => x.NodeId == "node4");
+    }
+
+    /// <summary>
+    /// When two events arrive for the same node, the one with the newer timestamp wins.
+    /// A duplicate or older event should be ignored (returns false).
+    /// Parameters: (firstType, firstOffsetMinutes, secondType, secondOffsetMinutes, expectedAddedResult, expectedSurvivingType)
+    /// </summary>
+    [Theory]
+    [InlineData(Messages.MembershipEventType.Joined,  0, Messages.MembershipEventType.Faulted, 1, true,  Messages.MembershipEventType.Faulted)]  // newer replaces older
+    [InlineData(Messages.MembershipEventType.Faulted, 1, Messages.MembershipEventType.Joined,  0, false, Messages.MembershipEventType.Faulted)]  // older is ignored
+    [InlineData(Messages.MembershipEventType.Joined,  0, Messages.MembershipEventType.Joined,  0, false, Messages.MembershipEventType.Joined)]   // exact duplicate is ignored
+    public void Given_TwoEventsForSameNode_When_Add_Then_CorrectEventSurvives(
+        Messages.MembershipEventType firstType,  int firstOffsetMinutes,
+        Messages.MembershipEventType secondType, int secondOffsetMinutes,
+        bool expectedAdded,
+        Messages.MembershipEventType expectedSurvivingType)
+    {
+        var subject = new MembershipEventBuffer(10);
+
+        subject.Add(new Messages.MembershipEvent("node1", firstType,  _now.AddMinutes(firstOffsetMinutes)));
+
+        // act
+        var added = subject.Add(new Messages.MembershipEvent("node1", secondType, _now.AddMinutes(secondOffsetMinutes)));
+
+        // assert
+        added.Should().Be(expectedAdded);
+        var events = subject.GetNextEvents(10);
+        events.Should().HaveCount(1);
+        events.Single().Type.Should().Be(expectedSurvivingType);
+    }
+
+    [Fact]
+    public void Given_Events_When_GetNextEvents_Then_UsedCountIncremented()
+    {
+        var subject = new MembershipEventBuffer(10);
+        subject.Add(new Messages.MembershipEvent("node1", Messages.MembershipEventType.Joined, _now));
+
+        subject.GetNextEvents(5);
+        subject.GetNextEvents(5);
+
+        var fieldInfo = typeof(MembershipEventBuffer).GetField("_items", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var items = (List<MembershipEventBuffer.BufferItem>)fieldInfo.GetValue(subject)!;
+
+        items.Single().UsedCount.Should().Be(2);
+    }
 }

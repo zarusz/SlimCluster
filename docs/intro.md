@@ -10,6 +10,9 @@
   - [Local File Persistence](#local-file-persistence)
 - [Cluster Membership](#cluster-membership)
   - [SWIM Membership](#swim-membership)
+    - [SWIM Configuration Parameters](#swim-configuration-parameters)
+    - [Member Statuses](#member-statuses)
+    - [Observing Membership Changes](#observing-membership-changes)
   - [Static Membership](#static-membership)
 - [Cluster Consensus](#cluster-consensus)
   - [Raft Consensus](#raft-consensus)
@@ -19,6 +22,9 @@
     - [State Machine](#state-machine)
     - [Configuration Parameters](#configuration-parameters)
   - [Leader Request Delegation ASP.NET Core Middleware](#leader-request-delegation-aspnet-core-middleware)
+    - [Setup](#setup)
+    - [Behaviour](#behaviour)
+    - [`DelegateRequestToLeader` predicate](#delegaterequesttoleader-predicate)
 
 # About
 
@@ -128,7 +134,7 @@ cfg.AddJsonSerialization();
 
 Package: [SlimCluster.Persistence](https://www.nuget.org/packages/SlimCluster.Persistence)
 
-The Node (service instance) needs to persist the minimal cluster state in between instance restarts (or crushes) to quickly catch up with the other Nodes in the cluster.
+The Node (service instance) needs to persist the minimal cluster state in between instance restarts (or crashes) to quickly catch up with the other Nodes in the cluster.
 Depending on the plugins and configuration used, such state might include:
 
 - Last known member list
@@ -173,7 +179,67 @@ SlimCluster has the [SWIM membership](#swim-membership) algorithm implemented as
 
 Package: [SlimCluster.Membership.Swim](https://www.nuget.org/packages/SlimCluster.Membership.Swim)
 
-ToDo
+SWIM (Scalable Weakly-consistent Infection-style Membership) is a gossip-based protocol for detecting node failures and maintaining the cluster member list without a central coordinator.
+Each node periodically probes a random peer (Ping). If no Ack is received within the timeout, it sends indirect probes via a subgroup of other members (PingReq).
+Membership change events (joins, departures, failures) are piggybacked onto these protocol messages and eventually propagate to every node.
+
+To add the SWIM plugin register it:
+
+```cs
+cfg.AddSwimMembership(opts =>
+{
+    opts.MembershipEventPiggybackCount = 2;
+});
+```
+
+### SWIM Configuration Parameters
+
+All properties are on `SwimClusterMembershipOptions`:
+
+| Property                        | Default | Description                                                                                         |
+| ------------------------------- | ------- | --------------------------------------------------------------------------------------------------- |
+| `ProtocolPeriod`                | `5s`    | How often the failure detection cycle (T') runs. Should be at least 3× the network round-trip time. |
+| `FailureDetectionSubgroupSize`  | `3`     | Number of nodes (k) used for indirect probing when a direct Ping is unanswered.                     |
+| `PingAckTimeout`                | `1.25s` | How long to wait for an Ack before treating the probe as failed.                                    |
+| `MembershipEventBufferCount`    | `20`    | Size of the per-node event buffer used for gossip propagation.                                      |
+| `MembershipEventPiggybackCount` | `3`     | How many buffered events are piggybacked on each Ping/Ack message.                                  |
+
+### Member Statuses
+
+SWIM nodes transition through the following statuses:
+
+| Status       | `IsActive` | Meaning                                                                 |
+| ------------ | ---------- | ----------------------------------------------------------------------- |
+| `Active`     | ✓          | Node is responding normally.                                            |
+| `Suspicious` | ✗          | Direct probe failed; indirect probes are in-flight.                     |
+| `Confirming` | ✓          | Node was suspected but has since replied; waiting for confirmation.     |
+| `Faulted`    | ✗          | No probe succeeded within the protocol period; node is considered dead. |
+
+### Observing Membership Changes
+
+Inject `IClusterMembership` to react to member events:
+
+```cs
+public class MyService
+{
+    public MyService(IClusterMembership membership)
+    {
+        membership.MemberJoined += (_, e) =>
+            Console.WriteLine($"Node {e.Node.Id} joined");
+
+        membership.MemberLeft += (_, e) =>
+            Console.WriteLine($"Node {e.Node.Id} left or faulted");
+
+        membership.MemberStatusChanged += (_, e) =>
+        {
+            if (e.Node.Status == SwimMemberStatus.Suspicious)
+                Console.WriteLine($"Node {e.Node.Id} is suspicious");
+        };
+    }
+}
+```
+
+The `IClusterMembership.Members` and `OtherMembers` collections give a consistent snapshot of the current live members at any point in time.
 
 ## Static Membership
 
@@ -184,7 +250,7 @@ If the members of the cluster are known then you do not need to run a membership
 - The node names (or IP address) are known and fixed,
 - Perhaps there is an external framework (or middleware) that tracks the node names (or IP address).
 
-ToDo:
+In this case you can register the known members directly in the MSDI container as `IMember` instances and skip the dynamic membership plugin entirely. This is useful in local development, integration tests, or environments where node addresses are stable (e.g. Kubernetes StatefulSets with predictable DNS names).
 
 # Cluster Consensus
 
@@ -197,7 +263,7 @@ Consensus allows to coordinate the nodes that form the cluster. It helps to mana
 Package: [SlimCluster.Consensus.Raft](https://www.nuget.org/packages/SlimCluster.Consensus.Raft)
 
 Raft consensus algorithm is one of the newer algorithms that has become popular due to its simplicity and flexibility.
-The [Raft paper](https://raft.github.io/raft.pdf) is an excelent source to undersand more details about the algorithm, and the parameters that can be fine tuned in SlimCluster.
+The [Raft paper](https://raft.github.io/raft.pdf) is an excellent source to understand more details about the algorithm, and the parameters that can be fine tuned in SlimCluster.
 
 At a high level the Raft consensus is:
 
@@ -279,7 +345,7 @@ The state machine is being evaluated on every node on the cluster (not only the 
 All node state machines eventually end up in the same state across leader and follower nodes.
 
 Leader is the one that decides up to what log index should be applied against the state machine.
-A log at index `N` is applied onto the state machine if the log at index `N` (and all before it) hve been replicated by the leader to a majority of nodes in the cluster.
+A log at index `N` is applied onto the state machine if the log at index `N` (and all before it) have been replicated by the leader to a majority of nodes in the cluster.
 
 The state machine represents your custom domain problem that, and works with the custom logs (commands) that are relevant for the state machine.
 For example if we are building a distributed counter, then the state machine is able to handle IncrementCounterCommand, DecrementCounterCommand, etc. The evaluation of each command, causes the counter increments, decrements.
@@ -348,13 +414,49 @@ cfg.AddRaftConsensus(opts =>
 ```
 
 - `NodeCount` sets the expected node count of the cluster. This is needed to be able to calculate the majority of nodes.
-- `LeaderTimeout` the time after which the leader is considered crashed/gone/unreliable/failed when no messages arrive from the leader to the follower node.
-- `LeaderPingInterval` the maximum round trip time the leader sends AppendEntriesRequest and until it has to get the AppendEntriesResponse back from the follower. This has to be big enough to allow for the network round trip, as well as for the leader and follower to process the message. This time should be significantly smaller than `LeaderTimeout`.
-- `ElectionTimeoutMin` the minimum time at which the election could time out if the candidate did not collect a majority of votes.
-- `ElectionTimeoutMax` the maximum time at which the election could time out if the candidate did not collect a majority of votes. Each new election started by node `N` initalizes its election timeout to a random time span between the min and max values.
+- `LeaderTimeout` — time a follower waits without hearing from a leader before starting an election.
+- `LeaderPingInterval` — how often the leader sends heartbeats to followers.
+- `ElectionTimeoutMin` / `ElectionTimeoutMax` — randomised election timeout range (randomisation prevents split votes).
+- `LogSerializerType` — optionally override the serializer used for log entries (defaults to the configured `ISerializer`).
 
 ## Leader Request Delegation ASP.NET Core Middleware
 
 Package: [SlimCluster.AspNetCore](https://www.nuget.org/packages/SlimCluster.AspNetCore)
 
-ToDo
+In a Raft cluster, state-mutating operations must be executed on the leader node.
+This middleware automatically forwards matching HTTP requests from any follower node to the current leader, so client code does not need to know which node is the leader.
+
+### Setup
+
+1. Register the plugin during configuration:
+
+```cs
+cfg.AddAspNetCore(opts =>
+{
+    // Route all requests whose path contains "/Counter" to the leader node
+    opts.DelegateRequestToLeader = r => r.Path.HasValue && r.Path.Value.Contains("/Counter");
+});
+```
+
+2. Add the middleware to the ASP.NET Core pipeline (after `UseRouting`):
+
+```cs
+app.UseClusterLeaderRequestDelegation();
+```
+
+### Behaviour
+
+- If the current node **is the leader**, the request is handled locally — no forwarding occurs.
+- If the current node **is a follower**, the request is transparently proxied to the leader's address over HTTP.
+- If **no leader is currently known** (e.g. during an election), a `ClusterException` is thrown. The caller should retry after a short delay.
+
+### `DelegateRequestToLeader` predicate
+
+The predicate receives the `HttpRequest` and should return `true` for requests that must run on the leader. For example:
+
+```cs
+// Forward all write endpoints but let reads run locally
+opts.DelegateRequestToLeader = r =>
+    (r.Method == HttpMethods.Post || r.Method == HttpMethods.Put || r.Method == HttpMethods.Delete)
+    && r.Path.StartsWithSegments("/api");
+```

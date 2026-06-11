@@ -205,9 +205,14 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             resp.Term = r.Term;
             if (_votedFor == null || _votedFor == node.Id)
             {
-                if (_logRepository.LastIndex.Index <= r.LastLogIndex)
+                // Raft §5.4.1: candidate log is up-to-date if its last term is higher,
+                // or same term but index is at least as long as ours.
+                var ourLastIndex = _logRepository.LastIndex;
+                var logIsUpToDate = r.LastLogTerm > ourLastIndex.Term
+                    || (r.LastLogTerm == ourLastIndex.Term && r.LastLogIndex >= ourLastIndex.Index);
+                if (logIsUpToDate)
                 {
-                    // Grant vote - sender's logs are at least as up to date as this nodes.
+                    // Grant vote - sender's log is at least as up to date as this node's.
                     resp.VoteGranted = true;
                     // Save who we given the vote to
                     _votedFor = node.Id;

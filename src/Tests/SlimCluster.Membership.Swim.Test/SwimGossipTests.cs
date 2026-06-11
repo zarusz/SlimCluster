@@ -57,12 +57,19 @@ public class SwimGossipTests
         _membershipEventListenerMock.VerifyNoOtherCalls();
     }
 
-    [Fact]
-    public void When_OnMessageSending_Given_PingMessage_And_MembershipEvents_Then_AddsToMessage()
+    public static TheoryData<Messages.SwimMessage> MessagesSupportingGossip =>
+        new()
+        {
+            new Messages.PingMessage("node0"),
+            new Messages.AckMessage("node0"),
+            new Messages.PingReqMessage("node0"),
+        };
+
+    [Theory]
+    [MemberData(nameof(MessagesSupportingGossip))]
+    public void When_OnMessageSending_Given_MessageWithGossipSupport_Then_EventsAddedToMessage(Messages.SwimMessage msg)
     {
         // arrange
-        var msg = new Messages.PingMessage("node0");
-
         var events = new List<Messages.MembershipEvent>();
         _membershipEventBufferMock.Setup(x => x.GetNextEvents(It.IsAny<int>())).Returns(events);
 
@@ -70,38 +77,6 @@ public class SwimGossipTests
         subject.OnMessageSending(msg);
 
         // assert
-        msg.Events.Should().BeSameAs(events);
-    }
-
-    [Fact]
-    public void When_OnMessageSending_Given_AckMessage_And_MembershipEvents_Then_AddsToMessage()
-    {
-        // arrange
-        var msg = new Messages.AckMessage("node0");
-
-        var events = new List<Messages.MembershipEvent>();
-        _membershipEventBufferMock.Setup(x => x.GetNextEvents(It.IsAny<int>())).Returns(events);
-
-        // act
-        subject.OnMessageSending(msg);
-
-        // assert
-        msg.Events.Should().BeSameAs(events);
-    }
-
-    [Fact]
-    public void When_OnMessageSending_Given_PingReqMessage_And_MembershipEvents_Then_AddsToMessage()
-    {
-        // arrange
-        var msg = new Messages.PingReqMessage("node0");
-
-        var events = new List<Messages.MembershipEvent>();
-        _membershipEventBufferMock.Setup(x => x.GetNextEvents(It.IsAny<int>())).Returns(events);
-
-        // act
-        subject.OnMessageSending(msg);
-
-        // assert
-        msg.Events.Should().BeSameAs(events);
+        ((Messages.IHasMembershipEvents)msg).Events.Should().BeSameAs(events);
     }
 }
