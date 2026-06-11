@@ -102,7 +102,7 @@ public class SwimFailureDetector
         {
             var selectedMemberIndex = _random.Next(activeMembers.Count);
             var selectedMember = activeMembers[selectedMemberIndex];
-
+            selectedMembers.Add(selectedMember);
             activeMembers.RemoveAt(selectedMemberIndex);
         }
 

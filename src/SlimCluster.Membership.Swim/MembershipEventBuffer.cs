@@ -64,7 +64,7 @@ public class MembershipEventBuffer : IMembershipEventBuffer
                 return false;
             }
 
-            if (_items.Count + 1 < _items.Capacity)
+            if (_items.Count < _items.Capacity)
             {
                 _items.Add(newItem);
             }

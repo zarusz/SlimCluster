@@ -386,7 +386,7 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
         {
             // Recycle expired entries
             var now = _time.Now;
-            list.RemoveAll(x => x.ExpiresAt > now);
+            list.RemoveAll(x => x.ExpiresAt < now);
 
             // Add the current request
             list.Add(indirectPingRequest);

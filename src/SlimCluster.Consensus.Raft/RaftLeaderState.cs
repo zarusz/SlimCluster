@@ -163,8 +163,13 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
     {
         var majorityCount = _options.NodeCount / 2;
 
-        // ToDo: Do not take into acount inactive members
-        var orderedMatchIndexes = ReplicationStateByNode.Values.Select(x => x.MatchIndex).OrderByDescending(x => x).ToList();
+        // Include the leader's own match index (its last log index) alongside followers.
+        // ToDo: Do not take into account inactive members
+        var leaderMatchIndex = _logRepository.LastIndex.Index;
+        var orderedMatchIndexes = ReplicationStateByNode.Values.Select(x => x.MatchIndex)
+            .Append(leaderMatchIndex)
+            .OrderByDescending(x => x)
+            .ToList();
 
         var majorityMatchIndex = orderedMatchIndexes.FirstOrDefault(matchIndex =>
         {
