@@ -1,6 +1,6 @@
 $root = [System.IO.Path]::GetFullPath("$PSScriptRoot\..")
 
-$sln_file = "$root\src\SlimCluster.sln"
+$sln_file = "$root\src\SlimCluster.slnx"
 $sln_platform = "Any CPU"
 $csp_platform = "AnyCPU" 
 $config = "Release"
@@ -19,13 +19,13 @@ $projects = @(
 	"SlimCluster.Consensus.Raft",
 
 	"SlimCluster.Serialization", 
-	"SlimCluster.Serialization.Json"
+	"SlimCluster.Serialization.Json",
 
 	"SlimCluster.Persistence",
 	"SlimCluster.Persistence.LocalFile",
 	
 	"SlimCluster.Transport",
-	"SlimCluster.Transport.Ip"
+	"SlimCluster.Transport.Ip",
 
 	"SlimCluster.AspNetCore"
 )
@@ -53,18 +53,18 @@ function _MsBuild($target) {
 	_AssertExec
 }
 
-function Clean() {
+function CleanArtifacts() {
 	
-	_Step "Clean folder $dist_folder"
+	_Step "CleanArtifacts folder $dist_folder"
 	# Ensure dist folder exists
 	New-Item -ErrorAction Ignore -ItemType directory -Path $dist_folder
 	Remove-Item $dist_folder\* -recurse
 	
-	_MsBuild "Clean"
+	_MsBuild "CleanArtifacts"
 }
 
 function Build() { 
-	Clean	
+	CleanArtifacts	
 	NuRestore
 	_MsBuild "Build"
 }
