@@ -34,6 +34,9 @@ public class TaskLoopTests
         // act
         await subjectMock.Object.Start();
 
+        // Wait for the background loop task to tick at least once
+        await Task.Delay(200);
+
         // assert
         subjectMock.Verify(x => x.OnLoopRun(It.IsAny<CancellationToken>()), Times.AtLeastOnce);
 

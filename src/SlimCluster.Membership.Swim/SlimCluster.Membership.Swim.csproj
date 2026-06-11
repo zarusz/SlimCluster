@@ -3,17 +3,17 @@
   <Import Project="../Common.NuGet.Properties.xml" />
 
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.1;net6</TargetFrameworks>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <Description>SWIM membership algorithm implementation for a distributed .NET service</Description>
     <PackageTags>SlimCluster Cluster Membership Memberlist SWIM</PackageTags>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="3.1.14" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="3.1.14" />
-    <PackageReference Include="Microsoft.Extensions.Options" Version="3.1.14" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
   <ItemGroup>

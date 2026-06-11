@@ -16,18 +16,7 @@ public class UdpSocketClient : ISocketClient
     public Task SendAsync(IPEndPoint endPoint, byte[] payload) => _udpClient.SendAsync(payload, payload.Length, endPoint);
     public async Task<(IPEndPoint RemoteEndPoint, byte[] Payload)> ReceiveAsync(CancellationToken cancellationToken)
     {
-#if NET6_0_OR_GREATER
         var result = await _udpClient.ReceiveAsync(cancellationToken).ConfigureAwait(false);
-#else        
-        var receiveTask = _udpClient.ReceiveAsync();
-        while (!receiveTask.IsCompleted)
-        {
-            await Task.WhenAny(receiveTask, Task.Delay(100, cancellationToken));
-
-            cancellationToken.ThrowIfCancellationRequested();
-        }
-        var result = receiveTask.Result;
-#endif
         return (result.RemoteEndPoint, result.Buffer);
     }
 

@@ -3,7 +3,7 @@
   <Import Project="../Common.NuGet.Properties.xml" />
 
   <PropertyGroup>
-    <TargetFrameworks>netcoreapp3.1</TargetFrameworks>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <Description>ASP.NET Core integration for SlimCluster</Description>
     <PackageTags>SlimCluster Cluster Consensus Raft ASP.NET</PackageTags>
     <RootNamespace>SlimCluster.AspNetCore</RootNamespace>

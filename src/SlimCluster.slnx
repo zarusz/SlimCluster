@@ -1,0 +1,41 @@
+<Solution>
+  <Folder Name="/Samples/">
+    <File Path="Samples/Docker-Build.ps1" />
+    <File Path="Samples/Dockerfile" />
+    <File Path="Samples/README.md" />
+    <Project Path="Samples/SlimCluster.Samples.Service/SlimCluster.Samples.Service.csproj" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path="../build/do_build.ps1" />
+    <File Path="../build/do_package.ps1" />
+    <File Path="../build/do_push_local.ps1" />
+    <File Path="../build/do_push_prod.ps1" />
+    <File Path="../build/do_test.ps1" />
+    <File Path="../build/do_test_ci.ps1" />
+    <File Path="../build/tasks.ps1" />
+    <File Path="../README.md" />
+    <File Path=".editorconfig" />
+    <File Path=".gitignore" />
+    <File Path="Common.NuGet.Properties.xml" />
+    <File Path="Common.Properties.xml" />
+  </Folder>
+  <Project Path="SlimCluster.AspNetCore/SlimCluster.AspNetCore.csproj" />
+  <Project Path="SlimCluster.Consensus.Raft/SlimCluster.Consensus.Raft.csproj" />
+  <Project Path="SlimCluster.Host/SlimCluster.Host.csproj" />
+  <Project Path="SlimCluster.Membership.Redis/SlimCluster.Membership.Redis.csproj" />
+  <Project Path="SlimCluster.Membership.Swim/SlimCluster.Membership.Swim.csproj" />
+  <Project Path="SlimCluster.Membership/SlimCluster.Membership.csproj" />
+  <Project Path="SlimCluster.Persistence.LocalFile/SlimCluster.Persistence.LocalFile.csproj" />
+  <Project Path="SlimCluster.Persistence/SlimCluster.Persistence.csproj" />
+  <Project Path="SlimCluster.Serialization.Json/SlimCluster.Serialization.Json.csproj" />
+  <Project Path="SlimCluster.Serialization/SlimCluster.Serialization.csproj" />
+  <Project Path="SlimCluster.Transport.Ip/SlimCluster.Transport.Ip.csproj" />
+  <Project Path="SlimCluster.Transport/SlimCluster.Transport.csproj" />
+  <Project Path="SlimCluster/SlimCluster.csproj" />
+  <Project Path="Tests/SlimCluster.Common.Test/SlimCluster.Common.Test.csproj" />
+  <Project Path="Tests/SlimCluster.Consensus.Raft.Test/SlimCluster.Consensus.Raft.Test.csproj" />
+  <Project Path="Tests/SlimCluster.Membership.Swim.Test/SlimCluster.Membership.Swim.Test.csproj" />
+  <Project Path="Tests/SlimCluster.Persistence.LocalFile.Test/SlimCluster.Persistence.LocalFile.Test.csproj" />
+  <Project Path="Tests/SlimCluster.Test/SlimCluster.Host.Test.csproj" />
+  <Project Path="Tests/SlimCluster.Transport.Ip.Tests/SlimCluster.Transport.Ip.Test.csproj" />
+</Solution>

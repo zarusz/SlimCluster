@@ -3,7 +3,7 @@
   <Import Project="../Common.NuGet.Properties.xml" />
 
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.1;net6</TargetFrameworks>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <Description>Raft consensus algorithm implementation for a distributed .NET service</Description>
     <PackageTags>SlimCluster Cluster Consensus Raft</PackageTags>
   </PropertyGroup>
@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.2" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
   <ItemGroup>
