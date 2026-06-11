@@ -12,21 +12,11 @@ The library promises to have a friendly API and pluggable architecture.
 
 The strategic aim for SlimCluster is to implement other algorithms to make distributed .NET micro-services easier and not require one to pull in a load of other 3rd party libraries or products.
 
+> Targets **net8.0** and **net10.0**.
+
 [![Gitter](https://badges.gitter.im/SlimCluster/community.svg)](https://gitter.im/SlimCluster/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 [![GitHub license](https://img.shields.io/github/license/zarusz/SlimCluster)](https://github.com/zarusz/SlimCluster/blob/master/LICENSE)
 [![Build](https://github.com/zarusz/SlimCluster/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/zarusz/SlimCluster/actions/workflows/build.yml)
-
-## Roadmap
-
-> This a relatively new project!
-
-The path to a stable production release:
-
-- :white_check_mark: Step 1: Implement the SWIM membership over UDP + sample.
-- :white_check_mark: Step 2: Documentation on Raft consensus.
-- :white_check_mark: Step 3: Implement the Raft over TCP/UDP + sample.
-- :white_large_square: Step 4: Documentation on SWIM membership.
-- :white_large_square: Step 5: Other extensions and plugins.
 
 ## Docs
 
@@ -159,11 +149,11 @@ ClusterMembership.MemberStatusChanged += (target, e) =>
 
 ## Architecture
 
-- The service references SlimCluser NuGet packages and configures MSDI.
+- The service references SlimCluster NuGet packages and configures MSDI.
 - Nodes (service instances) are communicating over UDP/IP and exchange protocol messages (SWIM and Raft).
 - Cluster membership (nodes that form the cluster) is managed (SWIM).
 - Cluster leader is elected at the beginning and in the event of failure (Raft).
-- Logs (commands that chage state machine state) are replicated from leader to followers (Raft).
+- Logs (commands that change state machine state) are replicated from leader to followers (Raft).
 - State Machine in each Node gets logs (commands) applied which have been replicated to majority of nodes (Raft).
 - Clients interact with the Cluster (state mutating operations are executed to Leader or Followers for reads) - depends on the use case.
 
@@ -185,15 +175,13 @@ NuGet packaged end up in `dist` folder
 
 ## Testing
 
-To run tests you need to update the respective `appsettings.json` to match your cloud infrastructure or local infrastructure.
-
-Run all tests:
+Run all unit tests:
 
 ```cmd
 dotnet test
 ```
 
-Run all tests except integration tests which require local/cloud infrastructure:
+Run all tests except integration tests (which require external infrastructure):
 
 ```cmd
 dotnet test --filter Category!=Integration
