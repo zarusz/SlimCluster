@@ -7,16 +7,18 @@ public class IndirectPingRequest : IHasPeriodSequenceNumber
     public long PeriodSequenceNumber { get; set; }
     public IAddress RequestingEndpoint { get; private set; }
     public IAddress TargetEndpoint { get; private set; }
+    public string TargetNodeId { get; private set; }
     /// <summary>
     /// Time after which the request is no longer needed
     /// </summary>
     public DateTimeOffset ExpiresAt { get; private set; }
 
-    public IndirectPingRequest(long periodSequenceNumber, IAddress requestingAddress, IAddress targetAddress, DateTimeOffset expiresAt)
+    public IndirectPingRequest(long periodSequenceNumber, IAddress requestingAddress, IAddress targetAddress, string targetNodeId, DateTimeOffset expiresAt)
     {
         PeriodSequenceNumber = periodSequenceNumber;
         RequestingEndpoint = requestingAddress;
         TargetEndpoint = targetAddress;
+        TargetNodeId = targetNodeId;
         ExpiresAt = expiresAt;
     }
 }

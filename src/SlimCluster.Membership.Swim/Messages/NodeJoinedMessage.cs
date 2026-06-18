@@ -2,9 +2,15 @@
 
 public class NodeJoinedMessage : SwimMessage
 {
+    public long Incarnation { get; set; }
+
     protected NodeJoinedMessage()
     {
     }
 
-    public NodeJoinedMessage(string fromNodeId) => FromNodeId = fromNodeId;
+    public NodeJoinedMessage(string fromNodeId, long incarnation = 0)
+        : base(fromNodeId)
+    {
+        Incarnation = incarnation;
+    }
 }

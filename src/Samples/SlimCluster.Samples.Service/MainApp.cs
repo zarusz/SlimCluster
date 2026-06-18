@@ -32,7 +32,7 @@ public record MainApp(ILogger<MainApp> Logger, IClusterMembership ClusterMembers
         {
             if (e.Node.Status == SwimMemberStatus.Suspicious)
             {
-                Logger.LogInformation("The node {NodeId} is suspicious. All active members are: {NodeList}", e.Node.Id, string.Join(", ", ClusterMembership.Members.Where(x => x.Node.Status == SwimMemberStatus.Active)));
+                Logger.LogInformation("The node {NodeId} is suspicious after its direct probe timed out. All active members are: {NodeList}", e.Node.Id, string.Join(", ", ClusterMembership.Members.Where(x => x.Node.Status == SwimMemberStatus.Active)));
             }
         };
         // doc:fragment:ExampleMembershipChanges

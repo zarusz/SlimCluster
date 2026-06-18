@@ -165,6 +165,91 @@ public class SwimFailureDetectorTests
         pingTarget.SwimStatus.Should().Be(SwimMemberStatus.Faulted);
     }
 
+    [Fact]
+    public async Task Given_PingAckTimeout_When_NoAckArrives_Then_NodeMarkedSuspicious()
+    {
+        var pingTarget = MakeMember("target", "10.0.0.9:6000");
+        var subject = CreateSubject(new List<SwimMember> { pingTarget });
+
+        _messageSenderMock
+            .Setup(x => x.SendMessage(It.IsAny<SwimMessage>(), It.IsAny<IAddress>()))
+            .Returns(Task.CompletedTask);
+
+        var afterPeriod = _now.Add(_options.ProtocolPeriod).AddSeconds(1);
+        _timeMock.SetupGet(x => x.Now).Returns(afterPeriod);
+        await subject.DoRun();
+
+        var afterAck = afterPeriod.Add(_options.PingAckTimeout).AddSeconds(1);
+        _timeMock.SetupGet(x => x.Now).Returns(afterAck);
+        await subject.DoRun();
+
+        pingTarget.SwimStatus.Should().Be(SwimMemberStatus.Suspicious);
+    }
+
+    [Fact]
+    public async Task Given_CurrentProbeAckArrives_When_PingAckTimeoutPasses_Then_NoPingReqSent()
+    {
+        var pingTarget = MakeMember("target", "10.0.0.9:6000");
+        var subject = CreateSubject(new List<SwimMember> { pingTarget });
+
+        _messageSenderMock
+            .Setup(x => x.SendMessage(It.IsAny<SwimMessage>(), It.IsAny<IAddress>()))
+            .Returns(Task.CompletedTask);
+
+        var afterPeriod = _now.Add(_options.ProtocolPeriod).AddSeconds(1);
+        _timeMock.SetupGet(x => x.Now).Returns(afterPeriod);
+        await subject.DoRun();
+
+        await subject.OnAckArrived(new AckMessage("target")
+        {
+            NodeId = "target",
+            PeriodSequenceNumber = subject.PeriodSequenceNumber,
+        }, pingTarget.Address);
+
+        var afterAck = afterPeriod.Add(_options.PingAckTimeout).AddSeconds(1);
+        _timeMock.SetupGet(x => x.Now).Returns(afterAck);
+
+        _messageSenderMock.Invocations.Clear();
+        var idle = await subject.DoRun();
+
+        idle.Should().BeTrue();
+        pingTarget.SwimStatus.Should().Be(SwimMemberStatus.Active);
+        _messageSenderMock.Verify(
+            x => x.SendMessage(It.IsAny<PingReqMessage>(), It.IsAny<IAddress>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Given_AckForDifferentNode_When_AckArrives_Then_CurrentProbeStillTimesOut()
+    {
+        var pingTarget = MakeMember("target", "10.0.0.9:6000");
+        var other = MakeMember("other", "10.0.0.10:6000");
+        var subject = CreateSubject(new List<SwimMember> { pingTarget, other });
+
+        _messageSenderMock
+            .Setup(x => x.SendMessage(It.IsAny<SwimMessage>(), It.IsAny<IAddress>()))
+            .Returns(Task.CompletedTask);
+
+        var afterPeriod = _now.Add(_options.ProtocolPeriod).AddSeconds(1);
+        _timeMock.SetupGet(x => x.Now).Returns(afterPeriod);
+        await subject.DoRun();
+
+        var currentTarget = new[] { pingTarget, other }.Single(x => x.SwimStatus == SwimMemberStatus.Confirming);
+        var otherNode = new[] { pingTarget, other }.Single(x => x.Id != currentTarget.Id);
+
+        await subject.OnAckArrived(new AckMessage(otherNode.Id)
+        {
+            NodeId = otherNode.Id,
+            PeriodSequenceNumber = subject.PeriodSequenceNumber,
+        }, otherNode.Address);
+
+        var afterAck = afterPeriod.Add(_options.PingAckTimeout).AddSeconds(1);
+        _timeMock.SetupGet(x => x.Now).Returns(afterAck);
+        await subject.DoRun();
+
+        currentTarget.SwimStatus.Should().Be(SwimMemberStatus.Suspicious);
+    }
+
     // -----------------------------------------------------------------------
     // DoRun: idle vs non-idle based on time
     // -----------------------------------------------------------------------

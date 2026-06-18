@@ -32,6 +32,11 @@ public class MembershipEventBuffer : IMembershipEventBuffer
 
     public MembershipEventBuffer(int bufferSize)
     {
+        if (bufferSize <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(bufferSize), bufferSize, "Membership event buffer size must be greater than zero.");
+        }
+
         _items = new List<BufferItem>(bufferSize);
     }
 
@@ -55,8 +60,8 @@ public class MembershipEventBuffer : IMembershipEventBuffer
             var indexOfNodeEvent = _items.FindIndex(x => x.MemberEvent.NodeId == e.NodeId);
             if (indexOfNodeEvent != -1)
             {
-                // Replace the previous event for the same node (prefer younger event)
-                if (_items[indexOfNodeEvent].MemberEvent.Timestamp < newItem.MemberEvent.Timestamp)
+                // Replace the previous event for the same node only when the incarnation is newer.
+                if (newItem.MemberEvent.IsNewerThan(_items[indexOfNodeEvent].MemberEvent))
                 {
                     _items[indexOfNodeEvent] = newItem;
                     return true;

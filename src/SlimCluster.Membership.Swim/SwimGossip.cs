@@ -60,13 +60,27 @@ public class SwimGossip
                     }
                     else
                     {
-                        await _membershipEventListener.OnNodeJoined(e.NodeId, remoteAddress.Parse(e.NodeAddress));
+                        if (_membershipEventListener is IIncarnationMembershipEventListener incarnationListener)
+                        {
+                            await incarnationListener.OnNodeJoined(e.NodeId, remoteAddress.Parse(e.NodeAddress), e.Incarnation);
+                        }
+                        else
+                        {
+                            await _membershipEventListener.OnNodeJoined(e.NodeId, remoteAddress.Parse(e.NodeAddress));
+                        }
                     }
                 }
                 if (e.Type == MembershipEventType.Left || e.Type == MembershipEventType.Faulted)
                 {
                     _logger.LogDebug("Event arrived that member {NodeId} left/faulted", e.NodeId);
-                    await _membershipEventListener.OnNodeLeft(e.NodeId);
+                    if (_membershipEventListener is IIncarnationMembershipEventListener incarnationListener)
+                    {
+                        await incarnationListener.OnNodeLeft(e.NodeId, e.Incarnation);
+                    }
+                    else
+                    {
+                        await _membershipEventListener.OnNodeLeft(e.NodeId);
+                    }
                 }
             }
         }

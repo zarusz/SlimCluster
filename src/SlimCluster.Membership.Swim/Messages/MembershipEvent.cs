@@ -15,6 +15,9 @@ public class MembershipEvent : IHasNodeId, IHasTimestamp
 
     public DateTimeOffset Timestamp { get; set; }
 
+    [JsonProperty("inc")]
+    public long Incarnation { get; set; }
+
     [JsonProperty("typ")]
     public MembershipEventType Type { get; set; }
 
@@ -29,11 +32,22 @@ public class MembershipEvent : IHasNodeId, IHasTimestamp
     {
     }
 
-    public MembershipEvent(string nodeId, MembershipEventType type, DateTimeOffset timestamp)
+    public MembershipEvent(string nodeId, MembershipEventType type, DateTimeOffset timestamp, long incarnation = 0)
     {
         EventId = Guid.NewGuid();
         NodeId = nodeId;
         Timestamp = timestamp;
+        Incarnation = incarnation;
         Type = type;
+    }
+
+    public bool IsNewerThan(MembershipEvent other)
+    {
+        if (Incarnation != other.Incarnation)
+        {
+            return Incarnation > other.Incarnation;
+        }
+
+        return Timestamp > other.Timestamp;
     }
 }
