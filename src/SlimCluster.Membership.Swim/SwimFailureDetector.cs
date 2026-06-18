@@ -88,6 +88,14 @@ public class SwimFailureDetector
 
     private Task OnPingTimeout()
     {
+        if (pingNode == null)
+        {
+            // in case this would have changed
+            return Task.CompletedTask;
+        }
+
+        pingNode.OnSuspicious();
+
         // get the active members only
         var activeMembers = ActiveMembers;
         if (activeMembers.Count == 0)
@@ -106,18 +114,14 @@ public class SwimFailureDetector
             activeMembers.RemoveAt(selectedMemberIndex);
         }
 
-        if (pingNode == null)
-        {
-            // in case this would have changed
-            return Task.CompletedTask;
-        }
-
-        var targetNodeAddress = pingNode.Address.ToString();
+        var targetNodeAddress = pingNode.Address.ToString() ?? string.Empty;
+        var targetNodeId = pingNode.Id;
 
         Task SendPingReq(SwimMember member)
         {
             var message = new PingReqMessage(_currentNode.Id)
             {
+                NodeId = targetNodeId,
                 NodeAddress = targetNodeAddress,
                 PeriodSequenceNumber = PeriodSequenceNumber
             };
@@ -135,7 +139,7 @@ public class SwimFailureDetector
         // Declare node that did not recieve an Ack for the Ping as Failed
         if (pingNode != null)
         {
-            if (pingNode.Status == SwimMemberStatus.Confirming)
+            if (pingNode.Status == SwimMemberStatus.Confirming || pingNode.Status == SwimMemberStatus.Suspicious)
             {
                 // When the node Ack did not arrive (via direct ping or via inderect ping-req) then declare this node as unhealty
                 pingNode.OnFaulted();
@@ -188,10 +192,16 @@ public class SwimFailureDetector
             {
                 _logger.LogDebug("Ack arrived too late from the node {NodeId}, period {PeriodSequenceNumber}, while the Ack message was for period {AckPeriodSequenceNumber}", m.NodeId, PeriodSequenceNumber, m.PeriodSequenceNumber);
             }
+            else if (pingNode == null || pingNode.Id != m.NodeId)
+            {
+                _logger.LogDebug("Ack arrived from node {NodeId}, but the current ping target is {PingNodeId}", m.NodeId, pingNode?.Id);
+            }
             else
             {
                 _logger.LogDebug("Ack arrived from the node {NodeId}, period {PeriodSequenceNumber}, node status {NodeStatus}", m.NodeId, PeriodSequenceNumber, node.Status);
                 node.OnActive(_time);
+                pingAckTimeout = null;
+                pingNode = null;
             }
         }
 

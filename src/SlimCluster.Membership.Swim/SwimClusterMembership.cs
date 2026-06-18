@@ -14,7 +14,7 @@ using SlimCluster.Transport;
 /// <summary>
 /// The SWIM algorithm implementation of <see cref="IClusterMembership"/> for maintaining membership.
 /// </summary>
-public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterControlComponent, IAsyncDisposable, IMembershipEventListener, IMessageSendingHandler, IMessageArrivedHandler, IDurableComponent
+public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterControlComponent, IAsyncDisposable, IIncarnationMembershipEventListener, IMessageSendingHandler, IMessageArrivedHandler, IDurableComponent
 {
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<SwimClusterMembership> _logger;
@@ -160,7 +160,7 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
         // ToDo: Introduce an option to either use multicast or initial list of nodes seed
 
         // Announce (multicast) to others that this node joined the network
-        return SendToMulticastGroup(new NodeJoinedMessage(_selfMember.Id));
+        return SendToMulticastGroup(new NodeJoinedMessage(_selfMember.Id, _selfMember.Incarnation));
     }
 
     protected Task NotifySelfLeft()
@@ -168,7 +168,7 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
         // ToDo: Improvement - send message about leaving to N randomly selected nodes.
 
         // Announce (multicast) to others that this node left the network
-        return SendToMulticastGroup(new NodeLeftMessage(_selfMember.Id));
+        return SendToMulticastGroup(new NodeLeftMessage(_selfMember.Id, _selfMember.Incarnation));
     }
 
     private async Task SendToMulticastGroup(SwimMessage message)
@@ -186,8 +186,8 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
 
         var task = msg switch
         {
-            NodeJoinedMessage m => OnNodeJoined(m.FromNodeId, remoteAddress, addToEventBuffer: true),
-            NodeLeftMessage m => OnNodeLeft(m.FromNodeId, addToEventBuffer: true),
+            NodeJoinedMessage m => OnNodeJoined(m.FromNodeId, remoteAddress, m.Incarnation, addToEventBuffer: true),
+            NodeLeftMessage m => OnNodeLeft(m.FromNodeId, m.Incarnation, addToEventBuffer: true),
             PingReqMessage m => OnPingReq(m, remoteAddress),
             PingMessage m => OnPing(m, remoteAddress),
             AckMessage m => OnAck(m, remoteAddress),
@@ -206,15 +206,18 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
         }
     }
 
-    protected SwimMember CreateMember(string nodeId, IAddress address)
-        => new(nodeId, address, _time.Now, SwimMemberStatus.Active, OnMemberStatusChanged, _loggerFactory.CreateLogger<SwimMember>());
+    protected SwimMember CreateMember(string nodeId, IAddress address, long incarnation)
+        => new(nodeId, address, _time.Now, SwimMemberStatus.Active, OnMemberStatusChanged, _loggerFactory.CreateLogger<SwimMember>(), incarnation);
+
+    public Task OnNodeJoined(string nodeId, IAddress senderAddress, long incarnation = 0)
+        => OnNodeJoined(nodeId, senderAddress, incarnation, addToEventBuffer: false);
 
     public Task OnNodeJoined(string nodeId, IAddress senderAddress)
-        => OnNodeJoined(nodeId, senderAddress, addToEventBuffer: false);
+        => OnNodeJoined(nodeId, senderAddress, incarnation: 0);
 
-    protected Task OnNodeJoined(string nodeId, IAddress senderAddress, bool addToEventBuffer)
+    protected Task OnNodeJoined(string nodeId, IAddress senderAddress, long incarnation, bool addToEventBuffer)
     {
-        var member = EnsureNodeOnMemberlist(nodeId, senderAddress);
+        var member = EnsureNodeOnMemberlist(nodeId, senderAddress, incarnation);
 
         // Add other members only
         if (member.Id != _selfMember.Id)
@@ -224,17 +227,20 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
             if (addToEventBuffer)
             {
                 // Notify the member joined
-                _gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Joined, _time.Now) { NodeAddress = member.Address.ToString() });
+                _gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Joined, _time.Now, member.Incarnation) { NodeAddress = member.Address.ToString() });
             }
         }
 
         return Task.CompletedTask;
     }
 
-    public Task OnNodeLeft(string nodeId)
-        => OnNodeLeft(nodeId, addToEventBuffer: false);
+    public Task OnNodeLeft(string nodeId, long incarnation = 0)
+        => OnNodeLeft(nodeId, incarnation, addToEventBuffer: false);
 
-    protected Task OnNodeLeft(string nodeId, bool addToEventBuffer)
+    public Task OnNodeLeft(string nodeId)
+        => OnNodeLeft(nodeId, incarnation: 0);
+
+    protected Task OnNodeLeft(string nodeId, long incarnation, bool addToEventBuffer)
     {
         // Add other members only
         if (nodeId != _selfMember.Id)
@@ -242,13 +248,19 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
             var member = _otherMembers.SingleOrDefault(x => x.Id == nodeId);
             if (member != null)
             {
+                if (incarnation < member.Incarnation)
+                {
+                    _logger.LogDebug("Ignoring stale left/faulted event for node {NodeId} with incarnation {EventIncarnation}; current incarnation is {MemberIncarnation}", nodeId, incarnation, member.Incarnation);
+                    return Task.CompletedTask;
+                }
+
                 _logger.LogInformation("Node {NodeId} left at {NodeAddress}", nodeId, member.Address);
                 _otherMembers.Mutate(list => list.Remove(member));
 
                 if (addToEventBuffer)
                 {
                     // Notify the member faulted
-                    _gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Left, _time.Now));
+                    _gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Left, _time.Now, member.Incarnation));
                 }
 
                 _ = NotifyMemberLeft(member);
@@ -262,9 +274,9 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
         if (member.SwimStatus == SwimMemberStatus.Faulted)
         {
             // Notify the member faulted
-            _gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Faulted, _time.Now));
+            _gossip?.MembershipEventBuffer.Add(new MembershipEvent(member.Id, MembershipEventType.Faulted, _time.Now, member.Incarnation));
 
-            _ = OnNodeLeft(member.Id);
+            _ = OnNodeLeft(member.Id, member.Incarnation);
         }
         else
         {
@@ -317,7 +329,7 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
         return Task.CompletedTask;
     }
 
-    private SwimMember EnsureNodeOnMemberlist(string nodeId, IAddress nodeAddress)
+    private SwimMember EnsureNodeOnMemberlist(string nodeId, IAddress nodeAddress, long incarnation = 0)
     {
         _logger.LogDebug("Ensuring node {NodeId}@{NodeAddress} is on the memberlist", nodeId, nodeAddress);
 
@@ -326,6 +338,14 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
             : _otherMembers.SingleOrDefault(x => x.Id == nodeId);
         if (member != null)
         {
+            if (incarnation < member.Incarnation)
+            {
+                _logger.LogDebug("Ignoring stale observation for node {NodeId} with incarnation {ObservedIncarnation}; current incarnation is {MemberIncarnation}", nodeId, incarnation, member.Incarnation);
+                return member;
+            }
+
+            member.ObserveIncarnation(incarnation);
+
             // Check if address changed
             if (member.OnObservedAddress(nodeAddress))
             {
@@ -340,7 +360,7 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
                 var existingMember = list.SingleOrDefault(x => x.Id == nodeId);
                 if (existingMember == null)
                 {
-                    existingMember = CreateMember(nodeId, nodeAddress);
+                    existingMember = CreateMember(nodeId, nodeAddress, incarnation);
                     list.Add(existingMember);
                     _logger.LogTrace("Added {Node} to the memberlist", existingMember);
                 }
@@ -380,6 +400,7 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
             periodSequenceNumber: m.PeriodSequenceNumber,
             targetAddress: targetNodeAddress,
             requestingAddress: senderAddress,
+            targetNodeId: m.NodeId,
             expiresAt: _time.Now.Add(_options.ProtocolPeriod.Multiply(3))); // Waiting 3 protocol period cycles should be more than enough
 
         _indirectPingRequests.Mutate(list =>
@@ -410,7 +431,11 @@ public class SwimClusterMembership : TaskLoop, IClusterMembership, IClusterContr
         }
 
         // Forward acks for PingReq (if any)
-        var matchedIndirectPingRequests = _indirectPingRequests.Where(x => x.TargetEndpoint.Equals(senderAddress) && x.PeriodSequenceNumber == m.PeriodSequenceNumber).ToList();
+        var matchedIndirectPingRequests = _indirectPingRequests
+            .Where(x => x.TargetEndpoint.Equals(senderAddress)
+                && x.TargetNodeId == m.NodeId
+                && x.PeriodSequenceNumber == m.PeriodSequenceNumber)
+            .ToList();
         if (matchedIndirectPingRequests.Count > 0)
         {
             _indirectPingRequests.Mutate(list =>

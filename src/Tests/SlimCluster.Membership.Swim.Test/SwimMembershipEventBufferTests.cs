@@ -95,6 +95,14 @@ public class SwimMembershipEventBufferTests
     }
 
     [Fact]
+    public void Given_ZeroCapacity_When_CreateBuffer_Then_Throws()
+    {
+        var act = () => new MembershipEventBuffer(0);
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
     public void Given_FullBuffer_When_AddNewEvent_Then_ReplacesHighestUsedEntry()
     {
         // arrange
@@ -124,8 +132,8 @@ public class SwimMembershipEventBufferTests
     }
 
     /// <summary>
-    /// When two events arrive for the same node, the one with the newer timestamp wins.
-    /// A duplicate or older event should be ignored (returns false).
+    /// When two events arrive for the same node, the one with the newer incarnation wins.
+    /// When incarnations are equal, the newer timestamp wins.
     /// Parameters: (firstType, firstOffsetMinutes, secondType, secondOffsetMinutes, expectedAddedResult, expectedSurvivingType)
     /// </summary>
     [Theory]
@@ -150,6 +158,32 @@ public class SwimMembershipEventBufferTests
         var events = subject.GetNextEvents(10);
         events.Should().HaveCount(1);
         events.Single().Type.Should().Be(expectedSurvivingType);
+    }
+
+    [Fact]
+    public void Given_EventsForSameNode_When_HigherIncarnationHasOlderTimestamp_Then_HigherIncarnationWins()
+    {
+        var subject = new MembershipEventBuffer(10);
+
+        subject.Add(new Messages.MembershipEvent("node1", Messages.MembershipEventType.Joined, _now.AddMinutes(10), incarnation: 1));
+
+        var added = subject.Add(new Messages.MembershipEvent("node1", Messages.MembershipEventType.Faulted, _now, incarnation: 2));
+
+        added.Should().BeTrue();
+        subject.GetNextEvents(10).Single().Type.Should().Be(Messages.MembershipEventType.Faulted);
+    }
+
+    [Fact]
+    public void Given_EventsForSameNode_When_LowerIncarnationHasNewerTimestamp_Then_LowerIncarnationIgnored()
+    {
+        var subject = new MembershipEventBuffer(10);
+
+        subject.Add(new Messages.MembershipEvent("node1", Messages.MembershipEventType.Faulted, _now, incarnation: 2));
+
+        var added = subject.Add(new Messages.MembershipEvent("node1", Messages.MembershipEventType.Joined, _now.AddMinutes(10), incarnation: 1));
+
+        added.Should().BeFalse();
+        subject.GetNextEvents(10).Single().Type.Should().Be(Messages.MembershipEventType.Faulted);
     }
 
     [Fact]

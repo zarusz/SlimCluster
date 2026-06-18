@@ -13,6 +13,7 @@ public class SwimMember : AbstractNode, IMember, INode
     #endregion
 
     public SwimMemberStatus SwimStatus { get; protected set; }
+    public long Incarnation { get; protected set; }
 
     /// <summary>
     /// Point in time after which the Suspicious node will be declared as Confirm if no ACK is recieved.
@@ -28,7 +29,7 @@ public class SwimMember : AbstractNode, IMember, INode
 
     #endregion
 
-    public SwimMember(string id, IAddress address, DateTimeOffset joined, SwimMemberStatus status, Action<SwimMember>? notifyStatusChanged, ILogger<SwimMember> logger)
+    public SwimMember(string id, IAddress address, DateTimeOffset joined, SwimMemberStatus status, Action<SwimMember>? notifyStatusChanged, ILogger<SwimMember> logger, long incarnation = 0)
         : base(id)
     {
         _logger = logger;
@@ -36,8 +37,20 @@ public class SwimMember : AbstractNode, IMember, INode
 
         Address = address;
         SwimStatus = status;
+        Incarnation = incarnation;
         Joined = joined;
         LastSeen = joined;
+    }
+
+    public bool ObserveIncarnation(long incarnation)
+    {
+        if (incarnation <= Incarnation)
+        {
+            return false;
+        }
+
+        Incarnation = incarnation;
+        return true;
     }
 
     public void OnActive(ITime time)
@@ -80,7 +93,7 @@ public class SwimMember : AbstractNode, IMember, INode
 
     public void OnFaulted()
     {
-        if (Status == SwimMemberStatus.Confirming)
+        if (Status == SwimMemberStatus.Confirming || Status == SwimMemberStatus.Suspicious)
         {
             ChangeStatusTo(SwimMemberStatus.Faulted);
         }

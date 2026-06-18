@@ -181,7 +181,7 @@ Package: [SlimCluster.Membership.Swim](https://www.nuget.org/packages/SlimCluste
 
 SWIM (Scalable Weakly-consistent Infection-style Membership) is a gossip-based protocol for detecting node failures and maintaining the cluster member list without a central coordinator.
 Each node periodically probes a random peer (Ping). If no Ack is received within the timeout, it sends indirect probes via a subgroup of other members (PingReq).
-Membership change events (joins, departures, failures) are piggybacked onto these protocol messages and eventually propagate to every node.
+Membership change events (joins, departures, failures) are piggybacked onto these protocol messages and eventually propagate to every node. Events include a node incarnation number so newer observations for a node supersede stale gossip even if messages arrive out of order.
 
 To add the SWIM plugin register it:
 
@@ -204,6 +204,8 @@ All properties are on `SwimClusterMembershipOptions`:
 | `MembershipEventBufferCount`    | `20`    | Size of the per-node event buffer used for gossip propagation.                                      |
 | `MembershipEventPiggybackCount` | `3`     | How many buffered events are piggybacked on each Ping/Ack message.                                  |
 
+Options are validated at startup. `ProtocolPeriod`, `PingAckTimeout`, and `MembershipEventBufferCount` must be greater than zero; `PingAckTimeout` must be shorter than `ProtocolPeriod`; subgroup and piggyback counts cannot be negative.
+
 ### Member Statuses
 
 SWIM nodes transition through the following statuses:
@@ -211,8 +213,8 @@ SWIM nodes transition through the following statuses:
 | Status       | `IsActive` | Meaning                                                                 |
 | ------------ | ---------- | ----------------------------------------------------------------------- |
 | `Active`     | ✓          | Node is responding normally.                                            |
-| `Suspicious` | ✗          | Direct probe failed; indirect probes are in-flight.                     |
-| `Confirming` | ✓          | Node was suspected but has since replied; waiting for confirmation.     |
+| `Confirming` | ✓          | Node is being directly probed and is still eligible as a live member.   |
+| `Suspicious` | ✗          | Direct probe timed out; indirect probes are in-flight if helpers exist. |
 | `Faulted`    | ✗          | No probe succeeded within the protocol period; node is considered dead. |
 
 ### Observing Membership Changes

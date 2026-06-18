@@ -7,6 +7,7 @@ public class SwimGossipTests
     private readonly DateTimeOffset _now;
     private readonly SwimClusterMembershipOptions _options;
     private readonly Mock<IMembershipEventListener> _membershipEventListenerMock;
+    private readonly Mock<IIncarnationMembershipEventListener> _incarnationMembershipEventListenerMock;
     private readonly Mock<IMembershipEventBuffer> _membershipEventBufferMock;
     private readonly SwimGossip subject;
 
@@ -14,7 +15,8 @@ public class SwimGossipTests
     {
         _now = DateTimeOffset.Parse("2022-06-13");
         _options = new SwimClusterMembershipOptions();
-        _membershipEventListenerMock = new Mock<IMembershipEventListener>();
+        _incarnationMembershipEventListenerMock = new Mock<IIncarnationMembershipEventListener>();
+        _membershipEventListenerMock = _incarnationMembershipEventListenerMock.As<IMembershipEventListener>();
         _membershipEventBufferMock = new Mock<IMembershipEventBuffer>();
 
         subject = new SwimGossip(XUnitLogger.CreateLogger<SwimGossip>(testOutputHelper), _options, _membershipEventListenerMock.Object, _membershipEventBufferMock.Object);
@@ -47,11 +49,11 @@ public class SwimGossipTests
         {
             if (eventType == Messages.MembershipEventType.Joined)
             {
-                _membershipEventListenerMock.Verify(x => x.OnNodeJoined(e1.NodeId, It.Is<IAddress>(ip => ip.ToString() == e1.NodeAddress)), Times.Once);
+                _incarnationMembershipEventListenerMock.Verify(x => x.OnNodeJoined(e1.NodeId, It.Is<IAddress>(ip => ip.ToString() == e1.NodeAddress), e1.Incarnation), Times.Once);
             }
             if (eventType == Messages.MembershipEventType.Faulted | eventType == Messages.MembershipEventType.Left)
             {
-                _membershipEventListenerMock.Verify(x => x.OnNodeLeft(e1.NodeId), Times.Once);
+                _incarnationMembershipEventListenerMock.Verify(x => x.OnNodeLeft(e1.NodeId, e1.Incarnation), Times.Once);
             }
         }
         _membershipEventListenerMock.VerifyNoOtherCalls();

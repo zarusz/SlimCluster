@@ -2,6 +2,7 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 using SlimCluster.Host;
 using SlimCluster.Membership.Swim.Messages;
@@ -16,6 +17,7 @@ public static class ClusterConfigurationExtensions
         cfg.PostConfigurationActions.Add(services =>
         {
             services.Configure(options);
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<SwimClusterMembershipOptions>, SwimClusterMembershipOptionsValidator>());
 
             services.AddSingleton<SwimClusterMembership>();
 
