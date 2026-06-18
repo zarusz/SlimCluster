@@ -4,6 +4,7 @@ public class InstallSnapshotRequest : RaftMessage, IHasTerm, IRequest<InstallSna
 {
     public int Term { get; set; }
     public string? LeaderId { get; set; }
+    public Guid SnapshotId { get; set; }
     public int LastIncludedIndex { get; set; }
     public int LastIncludedTerm { get; set; }
     public int Offset { get; set; }

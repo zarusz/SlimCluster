@@ -41,12 +41,12 @@ public class RaftLeaderStateTests : AbstractRaftIntegrationTest, IAsyncLifetime
         var command = _fixture.Create<object>();
         var commandPayload = _fixture.Create<byte[]>();
         var commandResult = _fixture.Create<object>();
-        var commandIndex = 1;
+        var commandIndex = 2;
 
         _logSerializerMock.SetupSerDes(command, commandPayload);
 
         _stateMachineMock
-            .Setup(x => x.Apply(command, 1))
+            .Setup(x => x.Apply(command, commandIndex))
             .ReturnsAsync(commandResult);
 
         var otherNodeReplicatedIndex = _otherMembers.ToDictionary(x => x.Node.Address, x => 0);
@@ -81,25 +81,35 @@ public class RaftLeaderStateTests : AbstractRaftIntegrationTest, IAsyncLifetime
         await Task.Delay(TimeSpan.FromSeconds(1));
 
         _logRepositoryMock
+            .Verify(x => x.Append(_term, Array.Empty<byte>()), Times.Once);
+
+        _logRepositoryMock
             .Verify(x => x.Append(_term, commandPayload), Times.Once);
 
         _messageSenderMock
             .Verify(x => x.SendRequest(
-                It.Is<AppendEntriesRequest>(r => r.PrevLogIndex == 0 && r.PrevLogTerm == 0 && r.Entries == null),
+                It.Is<AppendEntriesRequest>(r => r.PrevLogIndex == 0 && r.PrevLogTerm == 0 && r.Entries != null && r.Entries.Count == 1 && r.Entries.First().Entry.Length == 0),
                 It.IsAny<IAddress>(),
                 _options.LeaderPingInterval),
                 Times.AtLeast(_otherMembers.Count));
 
         _messageSenderMock
             .Verify(x => x.SendRequest(
-                It.Is<AppendEntriesRequest>(r => r.PrevLogIndex == 0 && r.PrevLogTerm == 0 && r.Entries != null && r.Entries.Count == 1 && r.Entries.First().Entry == commandPayload),
+                It.Is<AppendEntriesRequest>(r => r.PrevLogIndex == 1 && r.PrevLogTerm == _term && r.Entries != null && r.Entries.Count == 1 && r.Entries.First().Entry == commandPayload),
                 It.IsAny<IAddress>(),
                 _options.LeaderPingInterval),
                 Times.Exactly(_otherMembers.Count));
 
         _messageSenderMock
             .Verify(x => x.SendRequest(
-                It.Is<AppendEntriesRequest>(r => r.PrevLogIndex == 1 && r.PrevLogTerm == 1 && r.Entries == null),
+                It.Is<AppendEntriesRequest>(r => r.PrevLogIndex == 1 && r.PrevLogTerm == _term && r.Entries == null),
+                It.IsAny<IAddress>(),
+                _options.LeaderPingInterval),
+                Times.AtLeast(_otherMembers.Count));
+
+        _messageSenderMock
+            .Verify(x => x.SendRequest(
+                It.Is<AppendEntriesRequest>(r => r.PrevLogIndex == 2 && r.PrevLogTerm == _term && r.Entries == null),
                 It.IsAny<IAddress>(),
                 _options.LeaderPingInterval),
                 Times.AtLeast(_otherMembers.Count));

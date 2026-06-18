@@ -37,4 +37,14 @@ public class RaftConsensusOptions
     /// The timeout for a leader to process the request.
     /// </summary>
     public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Maximum number of snapshot bytes sent in a single InstallSnapshot request.
+    /// </summary>
+    public int SnapshotChunkSize { get; set; } = 64 * 1024;
+
+    /// <summary>
+    /// Maximum number of snapshot bytes a follower will buffer while installing a snapshot.
+    /// </summary>
+    public int MaxInstallSnapshotBytes { get; set; } = 64 * 1024 * 1024;
 }

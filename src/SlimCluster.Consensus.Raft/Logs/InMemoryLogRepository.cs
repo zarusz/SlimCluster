@@ -12,6 +12,8 @@ public class InMemoryLogRepository : ILogRepository
     private readonly LinkedList<LogEntry> _logs = new();
 
     public virtual LogIndex LastIndex => _lastIndex;
+    public virtual LogIndex LastCompactedIndex => _lastCompactedIndex;
+    public virtual int FirstAvailableIndex => _logsStartIndex;
     public virtual int CommitedIndex => _commitedIndex;
 
     public virtual int GetTermAtIndex(int index)
@@ -64,7 +66,21 @@ public class InMemoryLogRepository : ILogRepository
                 throw new ArgumentOutOfRangeException(nameof(entry.Index), entry.Index, null);
             }
 
-            // Remove all starting at index
+            if (entry.Index <= _lastIndex.Index)
+            {
+                var existingTerm = GetTermAtIndex(entry.Index);
+                if (existingTerm == entry.Term)
+                {
+                    continue;
+                }
+
+                if (entry.Index <= _commitedIndex)
+                {
+                    throw new InvalidOperationException($"Cannot overwrite committed log entry at index {entry.Index}.");
+                }
+            }
+
+            // Remove conflicting uncommitted entries starting at index.
             while (_logs.Count + _logsStartIndex > entry.Index)
             {
                 _logs.RemoveLast();
@@ -119,7 +135,7 @@ public class InMemoryLogRepository : ILogRepository
 
         _lastCompactedIndex = lastIncludedIndex;
         _commitedIndex = lastIncludedIndex.Index;
-        if (_lastIndex.Index < lastIncludedIndex.Index)
+        if (_lastIndex.Index <= lastIncludedIndex.Index)
         {
             _lastIndex = lastIncludedIndex;
             _logsStartIndex = lastIncludedIndex.Index + 1;

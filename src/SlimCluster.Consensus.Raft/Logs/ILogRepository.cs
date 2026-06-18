@@ -3,6 +3,8 @@
 public interface ILogRepository
 {
     LogIndex LastIndex { get; }
+    LogIndex LastCompactedIndex { get; }
+    int FirstAvailableIndex { get; }
     int CommitedIndex { get; }
     Task Append(IEnumerable<LogEntry> logs);
     /// <summary>

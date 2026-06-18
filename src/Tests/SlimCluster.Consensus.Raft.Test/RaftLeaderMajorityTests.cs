@@ -77,7 +77,7 @@ public class RaftLeaderMajorityTests : AbstractRaftIntegrationTest, IAsyncLifeti
 
         _logSerializerMock.SetupSerDes(command, commandPayload);
         _stateMachineMock
-            .Setup(x => x.Apply(command, 1))
+            .Setup(x => x.Apply(command, 2))
             .ReturnsAsync(commandResult);
 
         // node1 (index 0) replicates successfully; node2 (index 1) never advances past index 0
@@ -114,7 +114,7 @@ public class RaftLeaderMajorityTests : AbstractRaftIntegrationTest, IAsyncLifeti
 
         // assert: result returned (state machine applied), meaning commit happened with just 1 follower
         result.Should().Be(commandResult);
-        _stateMachineMock.Verify(x => x.Apply(command, 1), Times.Once);
+        _stateMachineMock.Verify(x => x.Apply(command, 2), Times.Once);
     }
 
     /// <summary>
@@ -195,6 +195,59 @@ public class RaftLeaderMajorityTests : AbstractRaftIntegrationTest, IAsyncLifeti
         // assert
         _logRepositoryMock.Object.CommitedIndex.Should().Be(1);
         _stateMachineMock.Verify(x => x.Apply(command, 1), Times.Once);
+    }
+
+    [Fact]
+    public async Task Given_FollowerBehindCompactedLog_When_LeaderReplicates_Then_InstallsSnapshot()
+    {
+        // arrange
+        var leaderTerm = 2;
+        var snapshot = new byte[] { 1, 2, 3 };
+
+        await _logRepositoryMock.Object.Append(new[]
+        {
+            new LogEntry(1, leaderTerm, Array.Empty<byte>()),
+            new LogEntry(2, leaderTerm, new byte[] { 10 }),
+            new LogEntry(3, leaderTerm, new byte[] { 11 })
+        });
+        await _logRepositoryMock.Object.Commit(3);
+        await _logRepositoryMock.Object.EraseBefore(3);
+
+        _stateMachineMock.Setup(x => x.Snapshot()).ReturnsAsync(snapshot);
+        _messageSenderMock
+            .Setup(x => x.SendRequest(It.IsAny<InstallSnapshotRequest>(), It.IsAny<IAddress>(), It.IsAny<TimeSpan?>()))
+            .ReturnsAsync((IRequest<InstallSnapshotResponse> r, IAddress _, TimeSpan? __) =>
+                new InstallSnapshotResponse((RaftMessage)r) { Term = leaderTerm, Success = true });
+
+        var subject = CreateLeaderStateProxy(leaderTerm);
+        subject.ReplicationStateByNode[_otherMembers[0].Node.Id] = new FollowerReplicatonState
+        {
+            NextIndex = 2,
+            MatchIndex = 1
+        };
+        subject.ReplicationStateByNode[_otherMembers[1].Node.Id] = new FollowerReplicatonState
+        {
+            NextIndex = 4,
+            MatchIndex = 3,
+            LastAppendRequest = DateTimeOffset.UtcNow.AddDays(1)
+        };
+
+        // act
+        await subject.OnLoopRunProxy();
+
+        // assert
+        _messageSenderMock.Verify(x => x.SendRequest(
+            It.Is<InstallSnapshotRequest>(r =>
+                r.Term == leaderTerm
+                && r.LastIncludedIndex == 2
+                && r.LastIncludedTerm == leaderTerm
+                && r.Offset == 0
+                && r.Done
+                && r.Data != null
+                && r.Data.SequenceEqual(snapshot)),
+            _otherMembers[0].Node.Address,
+            _options.LeaderPingInterval),
+            Times.Once);
     }
 
     private RaftLeaderStateProxy CreateLeaderStateProxy(int term)
