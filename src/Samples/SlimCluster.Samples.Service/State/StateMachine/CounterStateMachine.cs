@@ -1,5 +1,7 @@
 ﻿namespace SlimCluster.Samples.ConsoleApp.State.StateMachine;
 
+using System.Text.Json;
+
 using SlimCluster.Consensus.Raft;
 using SlimCluster.Samples.ConsoleApp.State.Logs;
 
@@ -8,6 +10,8 @@ using SlimCluster.Samples.ConsoleApp.State.Logs;
 /// </summary>
 public class CounterStateMachine : IStateMachine, ICounterState
 {
+    private sealed record CounterSnapshot(int Index, int Counter);
+
     private int _index = 0;
     private int _counter = 0;
 
@@ -32,7 +36,7 @@ public class CounterStateMachine : IStateMachine, ICounterState
             IncrementCounterCommand => ++_counter,
             DecrementCounterCommand => --_counter,
             ResetCounterCommand => _counter = 0,
-            _ => throw new NotImplementedException($"The command type ${command?.GetType().Name} is not supported")
+            _ => throw new NotSupportedException($"The command type ${command?.GetType().Name} is not supported")
         };
 
         _index = index;
@@ -40,12 +44,27 @@ public class CounterStateMachine : IStateMachine, ICounterState
         return Task.FromResult<object?>(result);
     }
 
-    // For now we don't support snapshotting
-    public Task Restore() => throw new NotImplementedException();
+    public Task Restore() => Task.CompletedTask;
 
-    // For now we don't support snapshotting
-    public Task<byte[]> Snapshot() => throw new NotImplementedException();
+    public Task<byte[]> Snapshot()
+    {
+        var snapshot = new CounterSnapshot(_index, _counter);
+        return Task.FromResult(JsonSerializer.SerializeToUtf8Bytes(snapshot));
+    }
 
-    // For now we don't support snapshotting
-    public Task InstallSnapshot(byte[] snapshot, int lastIncludedIndex, int lastIncludedTerm) => throw new NotImplementedException();
+    public Task InstallSnapshot(byte[] snapshot, int lastIncludedIndex, int lastIncludedTerm)
+    {
+        var state = JsonSerializer.Deserialize<CounterSnapshot>(snapshot)
+            ?? throw new InvalidOperationException("The counter snapshot payload is empty or invalid.");
+
+        if (state.Index != lastIncludedIndex)
+        {
+            throw new InvalidOperationException("The counter snapshot index does not match the Raft snapshot metadata.");
+        }
+
+        _index = state.Index;
+        _counter = state.Counter;
+
+        return Task.CompletedTask;
+    }
 }
