@@ -46,6 +46,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
     private RaftLeaderState? _leaderState;
     private RaftCandidateState? _candidateState;
     private RaftFollowerState? _followerState;
+    private MemoryStream? _installingSnapshot;
 
     private readonly ConcurrentQueue<(RaftMessage Message, IAddress Address)> _messages = new();
 
@@ -130,6 +131,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         // vote for self
         _votedFor = _clusterMembership.SelfMember.Node.Id;
         _candidateState.AddVote(_votedFor);
+        await PersistPersistentState();
 
         // request votes from each other node
         var lastIndex = _logRepository.LastIndex;
@@ -145,6 +147,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         await ClearPreviousState();
 
         UpdateTerm(term);
+        await PersistPersistentState();
 
         _followerState = new RaftFollowerState(_loggerFactory.CreateLogger<RaftFollowerState>(), _options, _time, _currentTerm, null);
     }
@@ -216,6 +219,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
                     resp.VoteGranted = true;
                     // Save who we given the vote to
                     _votedFor = node.Id;
+                    await PersistPersistentState();
                 }
             }
         }
@@ -255,6 +259,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
                     // clear who was voted for
                     _votedFor = null;
+                    await PersistPersistentState();
 
                     await BecomeLeader();
                 }
@@ -272,6 +277,12 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
     private Task SendAppendEntriesResponse(AppendEntriesRequest r, INode node, bool success)
     {
         var resp = new AppendEntriesResponse(r) { Term = _currentTerm, Success = success };
+        return _messageSender.SendMessage(resp, node.Address);
+    }
+
+    private Task SendInstallSnapshotResponse(InstallSnapshotRequest r, INode node, bool success)
+    {
+        var resp = new InstallSnapshotResponse(r) { Term = _currentTerm, Success = success };
         return _messageSender.SendMessage(resp, node.Address);
     }
 
@@ -332,10 +343,73 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         }
     }
 
+    protected async Task OnInstallSnapshotRequest(InstallSnapshotRequest r, INode node)
+    {
+        _logger.LogTrace("Handling {Message} from {Node}", r, node);
+
+        if (r.Term > _currentTerm)
+        {
+            await OnNewerTermDiscovered(r.Term, node);
+        }
+
+        if (r.Term < _currentTerm)
+        {
+            await SendInstallSnapshotResponse(r, node, success: false);
+            return;
+        }
+
+        if (Status != RaftNodeStatus.Follower)
+        {
+            await BecomeFollower(r.Term);
+        }
+        _followerState?.OnLeaderMessage(node);
+
+        if (r.LastIncludedIndex <= _logRepository.CommitedIndex)
+        {
+            await SendInstallSnapshotResponse(r, node, success: true);
+            return;
+        }
+
+        if (r.Offset == 0)
+        {
+            _installingSnapshot?.Dispose();
+            _installingSnapshot = new MemoryStream();
+        }
+
+        if (_installingSnapshot == null || _installingSnapshot.Length != r.Offset)
+        {
+            await SendInstallSnapshotResponse(r, node, success: false);
+            return;
+        }
+
+        if (r.Data != null)
+        {
+            await _installingSnapshot.WriteAsync(r.Data);
+        }
+
+        if (r.Done)
+        {
+            var snapshotBytes = _installingSnapshot.ToArray();
+            _installingSnapshot.Dispose();
+            _installingSnapshot = null;
+
+            await _stateMachine.InstallSnapshot(snapshotBytes, r.LastIncludedIndex, r.LastIncludedTerm);
+            await _logRepository.InstallSnapshot(new LogIndex(r.LastIncludedIndex, r.LastIncludedTerm));
+        }
+
+        await SendInstallSnapshotResponse(r, node, success: true);
+    }
+
     private void UpdateTerm(int term)
     {
         _currentTerm = term;
         _votedFor = null;
+    }
+
+    private Task PersistPersistentState()
+    {
+        var persistenceService = _serviceProvider.GetService<IClusterPersistenceService>();
+        return persistenceService?.Persist(CancellationToken.None) ?? Task.CompletedTask;
     }
 
     protected override async Task<bool> OnLoopRun(CancellationToken token)
@@ -357,6 +431,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
                     RequestVoteRequest r => OnRequestVoteRequest(r, node),
                     RequestVoteResponse r => OnRequestVoteResponse(r, node),
                     AppendEntriesRequest r => OnAppendEntriesRequest(r, node),
+                    InstallSnapshotRequest r => OnInstallSnapshotRequest(r, node),
                     _ => null
                 };
                 if (task != null)
@@ -422,12 +497,17 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
         _votedFor = state.Get<string?>("votedFor");
         _currentTerm = state.Get<int>("currentTerm");
-        Status = RaftNodeStatus.FromId(state.Get<Guid>("statusId"));
+        var restoredStatus = RaftNodeStatus.FromId(state.Get<Guid>("statusId"));
 
-        var leaderState = state.SubComponent("Leader");
-        if (leaderState != null)
+        ClearPreviousState().GetAwaiter().GetResult();
+        if (restoredStatus == RaftNodeStatus.Unknown)
         {
-            _leaderState?.OnStateRestore(leaderState);
+            Status = RaftNodeStatus.Unknown;
+        }
+        else
+        {
+            Status = RaftNodeStatus.Follower;
+            _followerState = new RaftFollowerState(_loggerFactory.CreateLogger<RaftFollowerState>(), _options, _time, _currentTerm, null);
         }
     }
 

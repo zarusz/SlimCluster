@@ -25,4 +25,9 @@ public interface IStateMachine
     /// </summary>
     /// <returns></returns>
     Task Restore();
+
+    /// <summary>
+    /// Installs a snapshot received from the Raft leader.
+    /// </summary>
+    Task InstallSnapshot(byte[] snapshot, int lastIncludedIndex, int lastIncludedTerm);
 }

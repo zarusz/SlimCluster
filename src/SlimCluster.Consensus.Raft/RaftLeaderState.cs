@@ -173,7 +173,9 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
         var majorityMatchIndex = orderedMatchIndexes.FirstOrDefault(matchIndex =>
         {
-            return orderedMatchIndexes.Count(x => x >= matchIndex) > majorityCount;
+            return matchIndex > _logRepository.CommitedIndex
+                && _logRepository.GetTermAtIndex(matchIndex) == Term
+                && orderedMatchIndexes.Count(x => x >= matchIndex) > majorityCount;
         });
 
         return Math.Max(majorityMatchIndex, _logRepository.CommitedIndex);
@@ -234,7 +236,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
                 _logger.LogInformation("{Node}: Follower log does not match at MatchIndex = {MatchIndex}", followerNode, followerReplicationState.MatchIndex);
                 // logs dont match for the specified index, will retry on next loop run with prev index
-                followerReplicationState.NextIndex--;
+                followerReplicationState.NextIndex = Math.Max(1, followerReplicationState.NextIndex - 1);
             }
         }
         catch (OperationCanceledException)
@@ -272,7 +274,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
         var requestTimer = Stopwatch.StartNew();
 
-        var tcs = new TaskCompletionSource<object?>();
+        var tcs = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pendingCommandResults.TryAdd(commandIndex, tcs);
         try
         {
