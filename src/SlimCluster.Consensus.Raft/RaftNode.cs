@@ -47,6 +47,10 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
     private RaftCandidateState? _candidateState;
     private RaftFollowerState? _followerState;
     private MemoryStream? _installingSnapshot;
+    private Guid? _installingSnapshotId;
+    private string? _installingSnapshotLeaderId;
+    private int _installingSnapshotLastIncludedIndex;
+    private int _installingSnapshotLastIncludedTerm;
 
     private readonly ConcurrentQueue<(RaftMessage Message, IAddress Address)> _messages = new();
 
@@ -163,6 +167,18 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         _candidateState = null;
 
         _followerState = null;
+
+        ClearInstallingSnapshot();
+    }
+
+    private void ClearInstallingSnapshot()
+    {
+        _installingSnapshot?.Dispose();
+        _installingSnapshot = null;
+        _installingSnapshotId = null;
+        _installingSnapshotLeaderId = null;
+        _installingSnapshotLastIncludedIndex = 0;
+        _installingSnapshotLastIncludedTerm = 0;
     }
 
     protected async Task BecomeLeader()
@@ -220,6 +236,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
                     // Save who we given the vote to
                     _votedFor = node.Id;
                     await PersistPersistentState();
+                    _followerState?.OnLeaderMessage(_followerState.Leader);
                 }
             }
         }
@@ -253,9 +270,10 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
                 _candidateState!.AddVote(node.Id);
 
                 // If majority votes, then claim leadership
-                if (_candidateState!.RecivedVotesFrom.Count > _options.NodeCount / 2)
+                var nodeCount = _clusterMembership.OtherMembers.Count + 1;
+                if (_candidateState!.RecivedVotesFrom.Count > nodeCount / 2)
                 {
-                    _logger.LogInformation("Recieved majority of votes {VoteCount} from cluster of {NodeCount} in term {Term}", _candidateState!.RecivedVotesFrom.Count, _options.NodeCount, _currentTerm);
+                    _logger.LogInformation("Recieved majority of votes {VoteCount} from cluster of {NodeCount} in term {Term}", _candidateState!.RecivedVotesFrom.Count, nodeCount, _currentTerm);
 
                     // clear who was voted for
                     _votedFor = null;
@@ -322,7 +340,16 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
         if (r.Entries != null && r.Entries.Count > 0)
         {
-            await _logRepository.Append(r.Entries);
+            try
+            {
+                await _logRepository.Append(r.Entries);
+            }
+            catch (InvalidOperationException e)
+            {
+                _logger.LogWarning(e, "Rejecting {Message} because it conflicts with committed log entries", r);
+                await SendAppendEntriesResponse(r, node, success: false);
+                return;
+            }
         }
 
         // Confirm all was good
@@ -372,11 +399,22 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
         if (r.Offset == 0)
         {
-            _installingSnapshot?.Dispose();
+            ClearInstallingSnapshot();
             _installingSnapshot = new MemoryStream();
+            _installingSnapshotId = r.SnapshotId;
+            _installingSnapshotLeaderId = r.LeaderId;
+            _installingSnapshotLastIncludedIndex = r.LastIncludedIndex;
+            _installingSnapshotLastIncludedTerm = r.LastIncludedTerm;
         }
 
-        if (_installingSnapshot == null || _installingSnapshot.Length != r.Offset)
+        var dataLength = r.Data?.Length ?? 0;
+        if (_installingSnapshot == null
+            || _installingSnapshotId != r.SnapshotId
+            || _installingSnapshotLeaderId != r.LeaderId
+            || _installingSnapshotLastIncludedIndex != r.LastIncludedIndex
+            || _installingSnapshotLastIncludedTerm != r.LastIncludedTerm
+            || _installingSnapshot.Length != r.Offset
+            || _installingSnapshot.Length + dataLength > _options.MaxInstallSnapshotBytes)
         {
             await SendInstallSnapshotResponse(r, node, success: false);
             return;
@@ -390,8 +428,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         if (r.Done)
         {
             var snapshotBytes = _installingSnapshot.ToArray();
-            _installingSnapshot.Dispose();
-            _installingSnapshot = null;
+            ClearInstallingSnapshot();
 
             await _stateMachine.InstallSnapshot(snapshotBytes, r.LastIncludedIndex, r.LastIncludedTerm);
             await _logRepository.InstallSnapshot(new LogIndex(r.LastIncludedIndex, r.LastIncludedTerm));

@@ -506,4 +506,33 @@ public class RaftNodeTests : AbstractRaftIntegrationTest, IAsyncLifetime
         // assert: stays follower, does not become candidate
         _subject.Status.Should().Be(RaftNodeStatus.Follower);
     }
+
+    [Fact]
+    public async Task Given_Follower_When_RequestVoteGranted_Then_ElectionTimerResets_And_StaysFollower()
+    {
+        // arrange
+        await _subject.OnLoopRunProxy(); // become follower
+        _logRepositoryMock.SetupGet(x => x.LastIndex).Returns(new LogIndex(0, 0));
+
+        var candidate = _otherMembers[0].Node;
+        var term = _subject.CurrentTerm + 1;
+
+        _now = _now.Add(_options.LeaderTimeout).AddSeconds(1);
+        await _subject.OnMessageArrived(
+            new RequestVoteRequest { CandidateId = candidate.Id, Term = term, LastLogIndex = 0, LastLogTerm = 0 },
+            candidate.Address);
+
+        // act
+        await _subject.OnLoopRunProxy();
+
+        // assert
+        _subject.Status.Should().Be(RaftNodeStatus.Follower);
+        _subject.CurrentTerm.Should().Be(term);
+        _messageSenderMock.Verify(
+            x => x.SendMessage(It.Is<RequestVoteResponse>(r => r.VoteGranted), candidate.Address),
+            Times.Once);
+        _messageSenderMock.Verify(
+            x => x.SendMessage(It.IsAny<RequestVoteRequest>(), It.IsAny<IAddress>()),
+            Times.Never);
+    }
 }

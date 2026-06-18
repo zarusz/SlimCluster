@@ -99,4 +99,62 @@ public class InMemoryLogRepositoryTests
         logsResult[0].Should().BeSameAs(logs[0]);
         logsResult[1].Should().BeSameAs(logs[1]);
     }
+
+    [Fact]
+    public async Task When_Append_Given_DuplicateEntriesWithSameTerm_Then_DoesNotTruncateSuffix()
+    {
+        // arrange
+        var logs = new LogEntry[]
+        {
+            new(1, 1, _fixture.Create<byte[]>()),
+            new(2, 1, _fixture.Create<byte[]>()),
+            new(3, 1, _fixture.Create<byte[]>())
+        };
+        await _subject.Append(logs);
+
+        // act
+        await _subject.Append(new[] { logs[2] });
+
+        // assert
+        _subject.LastIndex.Index.Should().Be(3);
+        var result = await _subject.GetLogsAtIndex(1, 3);
+        result.Should().Equal(logs);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task When_Append_Given_ConflictAtExistingIndex_Then_OnlyUncommittedSuffixCanBeReplaced(bool conflictIsCommitted)
+    {
+        // arrange
+        await _subject.Append(new[]
+        {
+            new LogEntry(1, 1, _fixture.Create<byte[]>()),
+            new LogEntry(2, 1, _fixture.Create<byte[]>()),
+            new LogEntry(3, 1, _fixture.Create<byte[]>())
+        });
+        await _subject.Commit(conflictIsCommitted ? 2 : 1);
+
+        var replacement = new LogEntry(2, 2, _fixture.Create<byte[]>());
+
+        // act
+        var act = () => _subject.Append(new[] { replacement });
+
+        // assert
+        if (conflictIsCommitted)
+        {
+            await act.Should().ThrowAsync<InvalidOperationException>();
+            _subject.LastIndex.Index.Should().Be(3);
+            _subject.LastIndex.Term.Should().Be(1);
+            _subject.CommitedIndex.Should().Be(2);
+        }
+        else
+        {
+            await act.Should().NotThrowAsync();
+            _subject.LastIndex.Index.Should().Be(2);
+            _subject.LastIndex.Term.Should().Be(2);
+            var result = await _subject.GetLogsAtIndex(1, 2);
+            result[1].Should().Be(replacement);
+        }
+    }
 }

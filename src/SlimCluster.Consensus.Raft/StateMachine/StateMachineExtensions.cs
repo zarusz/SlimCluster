@@ -7,6 +7,13 @@ public static class StateMachineExtensions
 {
     public static async Task<object?> Apply(this IStateMachine stateMachine, ILogRepository logRepository, byte[] logEntry, int logIndex, ILogger logger, ISerializer logSerializer)
     {
+        if (logEntry.Length == 0)
+        {
+            logger.LogDebug("Committing no-op log at index {LogIndex}", logIndex);
+            await logRepository.Commit(logIndex).ConfigureAwait(false);
+            return null;
+        }
+
         logger.LogTrace("Deserializing log at index {LogIndex}", logIndex);
         var command = logSerializer.Deserialize(logEntry);
         logger.LogDebug("Applying log at index {LogIndex}", logIndex);

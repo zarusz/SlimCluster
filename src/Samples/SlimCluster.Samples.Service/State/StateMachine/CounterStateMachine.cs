@@ -44,7 +44,7 @@ public class CounterStateMachine : IStateMachine, ICounterState
     public Task Restore() => throw new NotImplementedException();
 
     // For now we don't support snapshotting
-    public Task Snapshot() => throw new NotImplementedException();
+    public Task<byte[]> Snapshot() => throw new NotImplementedException();
 
     // For now we don't support snapshotting
     public Task InstallSnapshot(byte[] snapshot, int lastIncludedIndex, int lastIncludedTerm) => throw new NotImplementedException();

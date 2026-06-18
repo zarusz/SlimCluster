@@ -15,10 +15,9 @@ public interface IStateMachine
     Task<object?> Apply(object command, int index);
 
     /// <summary>
-    /// Take a snapshot
+    /// Takes a snapshot and returns the payload that can be sent to followers.
     /// </summary>
-    /// <returns></returns>
-    Task Snapshot();
+    Task<byte[]> Snapshot();
 
     /// <summary>
     /// Restores state machine from persisted snapshot

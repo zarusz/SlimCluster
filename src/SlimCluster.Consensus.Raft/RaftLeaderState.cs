@@ -73,6 +73,13 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         ReplicationStateByNode = new Dictionary<string, FollowerReplicatonState>();
     }
 
+    protected override async Task OnStarting()
+    {
+        await base.OnStarting();
+
+        await _logRepository.Append(Term, Array.Empty<byte>()).ConfigureAwait(false);
+    }
+
     protected override async Task<bool> OnLoopRun(CancellationToken token)
     {
         var tasks = new List<Task>();
@@ -96,7 +103,9 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
             if (sendNewLogEntries || sendPing)
             {
-                var task = ReplicateLogWithFollower(lastIndex, followerReplicationState, member.Node, skipEntries: sendFirstPing, token);
+                var task = followerReplicationState.NextIndex < _logRepository.FirstAvailableIndex
+                    ? InstallSnapshotOnFollower(followerReplicationState, member.Node, token)
+                    : ReplicateLogWithFollower(lastIndex, followerReplicationState, member.Node, skipEntries: sendFirstPing, token);
                 tasks.Add(task);
             }
         }
@@ -161,7 +170,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
     private int FindMajorityReplicatedIndex()
     {
-        var majorityCount = _options.NodeCount / 2;
+        var majorityCount = (_clusterMembership.OtherMembers.Count + 1) / 2;
 
         // Include the leader's own match index (its last log index) alongside followers.
         // ToDo: Do not take into account inactive members
@@ -246,6 +255,54 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
             // The response did not arrive, account for the wait time we already lost to not keep on calling the possibly failed follower
             followerReplicationState.LastAppendRequest = _time.Now;
+        }
+    }
+
+    private async Task InstallSnapshotOnFollower(FollowerReplicatonState followerReplicationState, INode followerNode, CancellationToken token)
+    {
+        var snapshot = await _stateMachine.Snapshot().ConfigureAwait(false);
+        var snapshotId = Guid.NewGuid();
+        var offset = 0;
+
+        while (offset < snapshot.Length || offset == 0)
+        {
+            token.ThrowIfCancellationRequested();
+
+            var count = Math.Min(Math.Max(1, _options.SnapshotChunkSize), snapshot.Length - offset);
+            var done = offset + count >= snapshot.Length;
+            var req = new InstallSnapshotRequest
+            {
+                Term = Term,
+                LeaderId = _clusterMembership.SelfMember.Node.Id,
+                SnapshotId = snapshotId,
+                LastIncludedIndex = _logRepository.LastCompactedIndex.Index,
+                LastIncludedTerm = _logRepository.LastCompactedIndex.Term,
+                Offset = offset,
+                Data = count > 0 ? snapshot.Skip(offset).Take(count).ToArray() : Array.Empty<byte>(),
+                Done = done
+            };
+
+            var resp = await _messageSender.SendRequest(req, followerNode.Address, timeout: _options.LeaderPingInterval).ConfigureAwait(false);
+            followerReplicationState.LastAppendRequest = _time.Now;
+
+            if (resp.Term > Term)
+            {
+                await _onNewerTermDiscovered(resp.Term, followerNode).ConfigureAwait(false);
+                return;
+            }
+
+            if (!resp.Success)
+            {
+                return;
+            }
+
+            offset += count;
+            if (done)
+            {
+                followerReplicationState.MatchIndex = req.LastIncludedIndex;
+                followerReplicationState.NextIndex = req.LastIncludedIndex + 1;
+                return;
+            }
         }
     }
 
