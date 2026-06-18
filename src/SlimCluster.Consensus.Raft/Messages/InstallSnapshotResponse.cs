@@ -3,6 +3,7 @@
 public class InstallSnapshotResponse : RaftResponse
 {
     public int Term { get; set; }
+    public bool Success { get; set; }
 
     protected InstallSnapshotResponse()
     {

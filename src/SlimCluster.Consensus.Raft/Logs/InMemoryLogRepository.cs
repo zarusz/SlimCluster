@@ -6,6 +6,7 @@ public class InMemoryLogRepository : ILogRepository
 {
     private LogIndex _lastIndex = new(0, 0);
     private int _commitedIndex = 0;
+    private LogIndex _lastCompactedIndex = new(0, 0);
 
     private int _logsStartIndex = 1;
     private readonly LinkedList<LogEntry> _logs = new();
@@ -15,6 +16,16 @@ public class InMemoryLogRepository : ILogRepository
 
     public virtual int GetTermAtIndex(int index)
     {
+        if (index == 0)
+        {
+            return 0;
+        }
+
+        if (index == _lastCompactedIndex.Index)
+        {
+            return _lastCompactedIndex.Term;
+        }
+
         var log = _logs.ElementAtOrDefault(index - _logsStartIndex)
             ?? throw new ArgumentOutOfRangeException(nameof(index), index, null);
 
@@ -78,15 +89,41 @@ public class InMemoryLogRepository : ILogRepository
 
     public Task EraseBefore(int index)
     {
-        if (index > _lastIndex.Index && _logsStartIndex > index)
+        if (index > _lastIndex.Index + 1 || index < _logsStartIndex)
         {
             throw new ArgumentOutOfRangeException(nameof(index), index, null);
         }
 
         while (_logsStartIndex < index)
         {
+            _lastCompactedIndex = new LogIndex(_logsStartIndex, _logs.First!.Value.Term);
             _logs.RemoveFirst();
             _logsStartIndex++;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public virtual Task InstallSnapshot(LogIndex lastIncludedIndex)
+    {
+        if (lastIncludedIndex.Index < _commitedIndex)
+        {
+            return Task.CompletedTask;
+        }
+
+        while (_logs.Count > 0 && _logsStartIndex <= lastIncludedIndex.Index)
+        {
+            _logs.RemoveFirst();
+            _logsStartIndex++;
+        }
+
+        _lastCompactedIndex = lastIncludedIndex;
+        _commitedIndex = lastIncludedIndex.Index;
+        if (_lastIndex.Index < lastIncludedIndex.Index)
+        {
+            _lastIndex = lastIncludedIndex;
+            _logsStartIndex = lastIncludedIndex.Index + 1;
+            _logs.Clear();
         }
 
         return Task.CompletedTask;

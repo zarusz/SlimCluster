@@ -1,6 +1,6 @@
 ﻿namespace SlimCluster.Consensus.Raft;
 
-public class InstallSnapshotRequest : RaftMessage
+public class InstallSnapshotRequest : RaftMessage, IHasTerm, IRequest<InstallSnapshotResponse>
 {
     public int Term { get; set; }
     public string? LeaderId { get; set; }

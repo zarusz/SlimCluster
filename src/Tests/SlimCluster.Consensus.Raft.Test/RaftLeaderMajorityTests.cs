@@ -1,5 +1,8 @@
-namespace SlimCluster.Consensus.Raft.Test;
+﻿namespace SlimCluster.Consensus.Raft.Test;
 
+using SlimCluster.Consensus.Raft.Logs;
+using SlimCluster.Membership;
+using SlimCluster.Serialization;
 using SlimCluster.Transport;
 
 /// <summary>
@@ -38,6 +41,26 @@ public class RaftLeaderMajorityTests : AbstractRaftIntegrationTest, IAsyncLifeti
 
     public Task InitializeAsync() => Task.CompletedTask;
     public Task DisposeAsync() => _subject.Stop();
+
+    private sealed class RaftLeaderStateProxy : RaftLeaderState
+    {
+        public RaftLeaderStateProxy(
+            ILogger<RaftLeaderState> logger,
+            int term,
+            RaftConsensusOptions options,
+            IClusterMembership clusterMembership,
+            IMessageSender messageSender,
+            ILogRepository logRepository,
+            IStateMachine stateMachine,
+            ISerializer logSerializer,
+            ITime time,
+            OnNewerTermDiscovered onNewerTermDiscovered)
+            : base(logger, term, options, clusterMembership, messageSender, logRepository, stateMachine, logSerializer, time, onNewerTermDiscovered)
+        {
+        }
+
+        public Task<bool> OnLoopRunProxy() => OnLoopRun(default);
+    }
 
     /// <summary>
     /// In a 3-node cluster the leader should commit once ONE follower replicates
@@ -125,5 +148,85 @@ public class RaftLeaderMajorityTests : AbstractRaftIntegrationTest, IAsyncLifeti
 
         // assert: state machine was never applied
         _stateMachineMock.Verify(x => x.Apply(It.IsAny<object>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Given_MajorityReplicatedEntryFromOlderTerm_When_LeaderAppliesLogs_Then_EntryNotCommitted()
+    {
+        // arrange
+        var leaderTerm = 2;
+        var previousTerm = 1;
+        var command = new object();
+        var commandPayload = new byte[] { 11 };
+
+        _logSerializerMock.SetupSerDes(command, commandPayload);
+        await _logRepositoryMock.Object.Append(previousTerm, commandPayload);
+
+        var subject = CreateLeaderStateProxy(leaderTerm);
+        PreventReplicationRequests(subject, matchIndexForFirstFollower: 1, matchIndexForSecondFollower: 0);
+
+        // act
+        await subject.OnLoopRunProxy();
+
+        // assert
+        _logRepositoryMock.Object.CommitedIndex.Should().Be(0);
+        _stateMachineMock.Verify(x => x.Apply(It.IsAny<object>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Given_MajorityReplicatedEntryFromCurrentTerm_When_LeaderAppliesLogs_Then_EntryCommitted()
+    {
+        // arrange
+        var leaderTerm = 2;
+        var command = new object();
+        var commandPayload = new byte[] { 12 };
+        var commandResult = new object();
+
+        _logSerializerMock.SetupSerDes(command, commandPayload);
+        _stateMachineMock.Setup(x => x.Apply(command, 1)).ReturnsAsync(commandResult);
+        await _logRepositoryMock.Object.Append(leaderTerm, commandPayload);
+
+        var subject = CreateLeaderStateProxy(leaderTerm);
+        PreventReplicationRequests(subject, matchIndexForFirstFollower: 1, matchIndexForSecondFollower: 0);
+
+        // act
+        await subject.OnLoopRunProxy();
+
+        // assert
+        _logRepositoryMock.Object.CommitedIndex.Should().Be(1);
+        _stateMachineMock.Verify(x => x.Apply(command, 1), Times.Once);
+    }
+
+    private RaftLeaderStateProxy CreateLeaderStateProxy(int term)
+    {
+        return new RaftLeaderStateProxy(
+            NullLogger<RaftLeaderState>.Instance,
+            term,
+            _options,
+            _clusterMembershipMock.Object,
+            _messageSenderMock.Object,
+            _logRepositoryMock.Object,
+            _stateMachineMock.Object,
+            _logSerializerMock.Object,
+            new Time(),
+            _onNewerTermDiscovered.Object);
+    }
+
+    private void PreventReplicationRequests(RaftLeaderState subject, int matchIndexForFirstFollower, int matchIndexForSecondFollower)
+    {
+        var recentlySent = DateTimeOffset.UtcNow.AddDays(1);
+
+        subject.ReplicationStateByNode[_otherMembers[0].Node.Id] = new FollowerReplicatonState
+        {
+            NextIndex = 2,
+            MatchIndex = matchIndexForFirstFollower,
+            LastAppendRequest = recentlySent
+        };
+        subject.ReplicationStateByNode[_otherMembers[1].Node.Id] = new FollowerReplicatonState
+        {
+            NextIndex = 2,
+            MatchIndex = matchIndexForSecondFollower,
+            LastAppendRequest = recentlySent
+        };
     }
 }

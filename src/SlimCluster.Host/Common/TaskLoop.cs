@@ -12,6 +12,7 @@ public abstract class TaskLoop
     private bool _isStopping = false;
 
     public bool IsStarted => _isStarted;
+    protected virtual TimeSpan StopTimeout => TimeSpan.FromSeconds(5);
 
     protected TaskLoop(ILogger logger, TimeSpan idleLoopDelay)
     {
@@ -63,7 +64,15 @@ public abstract class TaskLoop
 
                 if (_loopTask != null)
                 {
-                    await _loopTask;
+                    var completedTask = await Task.WhenAny(_loopTask, Task.Delay(StopTimeout));
+                    if (completedTask == _loopTask)
+                    {
+                        await _loopTask;
+                    }
+                    else
+                    {
+                        _logger.LogError("Task loop did not stop within {StopTimeout}", StopTimeout);
+                    }
                     _loopTask = null;
                 }
 
@@ -95,8 +104,12 @@ public abstract class TaskLoop
                     var idleRun = await OnLoopRun(_loopCts.Token).ConfigureAwait(false);
                     if (idleRun)
                     {
-                        await Task.Delay(_idleLoopDelay).ConfigureAwait(false);
+                        await Task.Delay(_idleLoopDelay, _loopCts.Token).ConfigureAwait(false);
                     }
+                }
+                catch (OperationCanceledException) when (_loopCts?.IsCancellationRequested == true)
+                {
+                    break;
                 }
                 catch (Exception e)
                 {

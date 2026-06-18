@@ -20,6 +20,7 @@ public interface ILogRepository
     Task Commit(int index);
     int GetTermAtIndex(int index);
     Task EraseBefore(int index);
+    Task InstallSnapshot(LogIndex lastIncludedIndex);
     Task<IReadOnlyList<LogEntry>> GetLogsAtIndex(int index, int count);
 }
 
