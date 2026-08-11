@@ -1,3 +1,5 @@
+
+
 # SlimCluster
 
 SlimCluster has the [Raft](https://raft.github.io/raft.pdf) distributed consensus algorithm implemented in .NET.
@@ -175,14 +177,16 @@ NuGet packaged end up in `dist` folder
 
 ## Testing
 
-Run all unit tests:
+Run all tests:
 
 ```cmd
+cd src
 dotnet test
 ```
 
-Run all tests except integration tests (which require external infrastructure):
+Run tests excluding integration tests (which require external infrastructure):
 
 ```cmd
+cd src
 dotnet test --filter Category!=Integration
 ```
