@@ -7,6 +7,8 @@ The app is running in 3 instances (pods) on Kubernetes. The instances are formin
 
 The Kubernetes StatefulSet gives each pod a stable node ID (`sc-service-0`, `sc-service-1`, or `sc-service-2`). Each pod uses the same configured voter list. When running outside Kubernetes, the sample defaults to one voter using the machine name. To run on multiple hosts, configure the same `RaftVoterIds` list of machine names on each host.
 
+If you ran the older Kubernetes sample, delete its Deployment with `kubectl delete deployment sc-service` before applying the new manifests. The Deployment and StatefulSet are separate resources, and the older pods share the same Service selector. This recreates the sample cluster with an empty counter because the sample stores its log and counter in memory.
+
 > The scripts were tested on Docker Desktop with Minikube
 
 To run the sample:

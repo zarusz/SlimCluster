@@ -416,12 +416,20 @@ cfg.AddRaftConsensus(opts =>
 ```
 
 - `VoterIds` is required. Use the same list of stable, unique node IDs on every Raft node and set each node's `ClusterConfiguration.NodeId` to its own ID from that list. Raft needs a majority of the configured voters even when SWIM loses contact with some of them.
-- `NodeCount` is optional. If set, it must equal the length of `VoterIds`. Existing deployments that configured only `NodeCount` must now supply the voter list. Coordinate the upgrade across the cluster because older versions calculate a majority from their current SWIM view. Changing the voter list of a running cluster requires a Raft reconfiguration protocol.
+- `NodeCount` is optional. If set, it must equal the length of `VoterIds`.
 - `RequestTimeout` bounds how long a client waits for a command result. A `TimeoutException` means the outcome is unknown. The command may still commit later.
 - `LeaderTimeout` — time a follower waits without hearing from a leader before starting an election.
 - `LeaderPingInterval` — how often the leader sends heartbeats to followers.
 - `ElectionTimeoutMin` / `ElectionTimeoutMax` — randomised election timeout range (randomisation prevents split votes).
 - `LogSerializerType` — optionally override the serializer used for log entries (defaults to the configured `ISerializer`).
+
+#### Upgrading an existing Raft cluster
+
+1. Record the stable node IDs of the existing voters. Configure that same list as `VoterIds` on every node, including its own ID. Keep each node's existing `ClusterConfiguration.NodeId` and persisted state. You can remove `NodeCount` once the list is configured.
+2. Schedule a coordinated restart. Stop all old-version voters before starting the new version because older versions calculate quorum from their current SWIM view.
+3. Bring up a majority of the configured voters so the cluster can elect a leader and commit writes again.
+
+Keep the same voter list throughout the upgrade. SlimCluster currently uses a fixed voter set. Changing that set in a running cluster requires a Raft reconfiguration protocol.
 
 ## Leader Request Delegation ASP.NET Core Middleware
 
