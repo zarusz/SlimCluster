@@ -25,6 +25,7 @@ public static class ClusterConfigurationExtensions
             services.AddTransient<IDurableComponent>(svp => svp.GetRequiredService<RaftNode>());
 
             services.AddTransient<IRaftClientRequestHandler, RaftClientRequestHandler>();
+            services.TryAddTransient<IRaftVoterReconfiguration>(svp => svp.GetRequiredService<RaftNode>());
         });
         return cfg;
     }

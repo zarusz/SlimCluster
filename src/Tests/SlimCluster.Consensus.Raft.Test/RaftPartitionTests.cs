@@ -4,6 +4,8 @@ using System.Collections.Concurrent;
 
 using SlimCluster.Consensus.Raft.Logs;
 using SlimCluster.Membership;
+using SlimCluster.Persistence;
+using SlimCluster.Persistence.LocalFile;
 using SlimCluster.Serialization;
 using SlimCluster.Transport;
 
@@ -75,7 +77,7 @@ public class RaftPartitionTests
             await network.StepUntil(() => network.Peers.All(peer => peer.Log.CommitedIndex == 2), deadline.Token);
             foreach (var peer in network.Peers)
             {
-                var entry = await peer.Log.GetByIndex(2);
+                var entry = (await peer.Log.GetLogsAtIndex(2, 1)).Single();
                 entry.Term.Should().Be(majority.Node.CurrentTerm);
                 entry.Entry.Should().Equal(1);
             }
@@ -90,20 +92,146 @@ public class RaftPartitionTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Given_ReplacementLearner_When_ChangingVoters_Then_BothQuorumsAreRequired(bool failoverDuringJoint)
+    {
+        var directory = Directory.CreateTempSubdirectory();
+        try
+        {
+            var members = Enumerable.Range(1, 4)
+                .Select(i => (IMember)new Member(new Node($"node-{i}", $"192.168.1.{i}", 6200), DateTimeOffset.UnixEpoch))
+                .ToArray();
+            var initial = members.Take(3).Select(member => member.Node.Id).ToArray();
+            var target = members.Skip(1).Select(member => member.Node.Id).ToArray();
+            var options = Options.Create(new RaftConsensusOptions
+            {
+                VoterIds = initial,
+                EnableVoterReconfiguration = true,
+                LeaderPingInterval = TimeSpan.FromMilliseconds(100),
+                RequestTimeout = TimeSpan.FromSeconds(15)
+            });
+            var network = new TestNetwork(members, options, directory.FullName);
+            var oldLeader = network.Peers[0];
+            var newcomer = network.Peers[3];
+            network.Heal();
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            try
+            {
+                foreach (var peer in network.Peers)
+                {
+                    await peer.Node.OnStartingProxy();
+                }
+                await network.Step();
+                newcomer.Now += options.Value.LeaderTimeout + TimeSpan.FromSeconds(1);
+                await network.Step();
+                newcomer.Node.Status.Should().Be(RaftNodeStatus.Follower);
+                newcomer.Node.CurrentTerm.Should().Be(0);
+
+                oldLeader.Now += options.Value.LeaderTimeout + TimeSpan.FromSeconds(1);
+                await network.StepUntil(() => oldLeader.Log.CommitedIndex == 1, deadline.Token);
+                newcomer.Log.LastIndex.Index.Should().Be(0);
+
+                // Only the old configuration can acknowledge the joint entry until the filter is removed.
+                network.AllowAppend = (receiver, request) =>
+                    request.Entries?.Any(entry => entry.VoterChange != null) != true || receiver == network.Peers[1];
+                var change = oldLeader.Node.ChangeVoters(target, deadline.Token);
+                await network.StepUntil(() => network.Peers[1].Log.LastIndex.Index == 2, deadline.Token);
+                newcomer.Log.LastIndex.Index.Should().Be(1);
+                oldLeader.Log.CommitedIndex.Should().Be(1);
+                change.IsCompleted.Should().BeFalse();
+                var joint = (await oldLeader.Log.GetLogsAtIndex(2, 1)).Single().VoterChange;
+                joint.Should().NotBeNull();
+                joint!.IsJoint.Should().BeTrue();
+
+                if (failoverDuringJoint)
+                {
+                    network.AllowAppend = (_, request) =>
+                        request.Entries?.Any(entry => entry.VoterChange is { IsJoint: false }) != true;
+                    await network.StepUntil(() => oldLeader.Log.CommitedIndex == 2
+                        && network.Peers.Skip(1).All(peer => peer.Log.LastIndex.Index == 2), deadline.Token);
+                    await oldLeader.Node.OnNewerTermDiscovered(oldLeader.Node.CurrentTerm + 1, newcomer.Member.Node);
+                    await Assert.ThrowsAsync<RaftClusterException>(() => change);
+                    network.Isolate(oldLeader);
+                }
+                else
+                {
+                    network.AllowAppend = (receiver, request) => receiver != network.Peers[2]
+                        || request.Entries?.Any(entry => entry.VoterChange is { IsJoint: false }) != true;
+                    await network.StepUntil(() => change.IsCompleted, deadline.Token);
+                    await change;
+                    var final = (await oldLeader.Log.GetLogsAtIndex(3, 1)).Single().VoterChange;
+                    final!.IsJoint.Should().BeFalse();
+                    final.NewVoterIds.Should().Equal(target);
+                }
+                await network.StepUntil(() => oldLeader.Node.Status == RaftNodeStatus.Follower, deadline.Token);
+                network.AllowAppend = null;
+
+                // The promoted node can now lead. The removed node does not restart elections.
+                newcomer.Now += options.Value.LeaderTimeout + TimeSpan.FromSeconds(1);
+                if (!failoverDuringJoint)
+                {
+                    oldLeader.Now += options.Value.LeaderTimeout + TimeSpan.FromSeconds(1);
+                }
+                await network.StepUntil(() => newcomer.Node.Status == RaftNodeStatus.Leader, deadline.Token);
+                oldLeader.Node.Status.Should().Be(RaftNodeStatus.Follower);
+                var write = newcomer.Node.OnClientRequest("increment", deadline.Token);
+                await network.StepUntil(() => write.IsCompleted, deadline.Token);
+                (await write).Should().Be("increment");
+                if (failoverDuringJoint)
+                {
+                    // The new leader resumes a committed joint entry without a client retry.
+                    await network.StepUntil(() => newcomer.Log.CommitedIndex >= 5, deadline.Token);
+                }
+
+                var reopened = new FileRaftLogRepository(Path.Combine(directory.FullName, $"{newcomer.Member.Node.Id}.log"));
+                reopened.CommitedIndex.Should().Be(newcomer.Log.CommitedIndex);
+                var restoredVoters = new RaftVoterState(initial);
+                await restoredVoters.ReadLog(reopened);
+                restoredVoters.Current.NewIds.Should().Equal(target);
+                restoredVoters.Current.Contains(oldLeader.Member.Node.Id).Should().BeFalse();
+            }
+            finally
+            {
+                foreach (var peer in network.Peers)
+                {
+                    await peer.Node.OnNewerTermDiscovered(peer.Node.CurrentTerm + 1, members[0].Node);
+                }
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     private sealed class TestNetwork
     {
         private readonly IMember[] _voters;
         private readonly ConcurrentDictionary<Guid, TaskCompletionSource<AppendEntriesResponse>> _requests = new();
 
         public Peer[] Peers { get; }
+        public Func<Peer, AppendEntriesRequest, bool>? AllowAppend { get; set; }
 
-        public TestNetwork(IMember[] voters, IOptions<RaftConsensusOptions> options)
+        public TestNetwork(IMember[] voters, IOptions<RaftConsensusOptions> options, string? directory = null)
         {
             _voters = voters;
             Peers = voters.Select((voter, index) =>
             {
                 var partition = index < 2 ? voters.Take(2) : voters.Skip(2);
-                return new Peer(voter, partition, options, this);
+                var peerOptions = options;
+                if (directory != null && !options.Value.VoterIds.Contains(voter.Node.Id))
+                {
+                    peerOptions = Options.Create(new RaftConsensusOptions
+                    {
+                        VoterIds = options.Value.VoterIds,
+                        EnableVoterReconfiguration = true,
+                        JoinAsLearner = true,
+                        LeaderPingInterval = options.Value.LeaderPingInterval
+                    });
+                }
+                return new Peer(voter, partition, peerOptions, this, directory);
             }).ToArray();
         }
 
@@ -137,10 +265,20 @@ public class RaftPartitionTests
             }
         }
 
+        public void Isolate(Peer isolated)
+        {
+            isolated.Discovered = Array.Empty<IMember>();
+            foreach (var peer in Peers.Where(peer => peer != isolated))
+            {
+                peer.Discovered = peer.Discovered.Where(member => member != isolated.Member).ToArray();
+            }
+        }
+
         public Task Send(Peer sender, object message, IAddress address)
         {
             var receiver = Peers.Single(peer => peer.Member.Node.Address.Equals(address));
-            if (!sender.Discovered.Contains(receiver.Member))
+            if (!sender.Discovered.Contains(receiver.Member)
+                || (message is AppendEntriesRequest append && AllowAppend?.Invoke(receiver, append) == false))
             {
                 return Task.CompletedTask;
             }
@@ -176,12 +314,13 @@ public class RaftPartitionTests
         public IMember Member { get; }
         public IReadOnlyCollection<IMember> Discovered { get; set; }
         public DateTimeOffset Now { get; set; } = DateTimeOffset.UnixEpoch;
-        public InMemoryLogRepository Log { get; } = new();
+        public ILogRepository Log { get; }
         public RaftNodeProxy Node { get; }
 
-        public Peer(IMember member, IEnumerable<IMember> partition, IOptions<RaftConsensusOptions> options, TestNetwork network)
+        public Peer(IMember member, IEnumerable<IMember> partition, IOptions<RaftConsensusOptions> options, TestNetwork network, string? directory)
         {
             Member = member;
+            Log = directory == null ? new InMemoryLogRepository() : new FileRaftLogRepository(Path.Combine(directory, $"{member.Node.Id}.log"));
             Discovered = partition.Where(voter => voter != member).ToArray();
             var membership = new Mock<IClusterMembership>();
             membership.SetupGet(x => x.SelfMember).Returns(Member);
@@ -202,6 +341,11 @@ public class RaftPartitionTests
                     network.Append(this, (AppendEntriesRequest)request, address, timeout));
             Node = new RaftNodeProxy(NullLoggerFactory.Instance, services.Object, membership.Object,
                 clock.Object, Log, sender.Object, machine.Object, options);
+            if (directory != null)
+            {
+                services.Setup(x => x.GetService(typeof(IClusterPersistenceService)))
+                    .Returns(new LocalJsonFileClusterPersistenceService(new[] { Node }, Path.Combine(directory, $"{member.Node.Id}.json"), Newtonsoft.Json.Formatting.None));
+            }
         }
     }
 }

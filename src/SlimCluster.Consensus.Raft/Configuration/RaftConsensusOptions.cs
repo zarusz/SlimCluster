@@ -34,6 +34,12 @@ public class RaftConsensusOptions
     /// </summary>
     public int NodeCount { get; set; }
 
+    /// <summary>Enables changing the voter set through the replicated log.</summary>
+    public bool EnableVoterReconfiguration { get; set; }
+
+    /// <summary>Starts a node outside the initial voter set so a leader can catch it up before promotion.</summary>
+    public bool JoinAsLearner { get; set; }
+
     /// <summary>
     /// The service type that should be resolved from MSDI for Log Entry serialization.
     /// </summary>

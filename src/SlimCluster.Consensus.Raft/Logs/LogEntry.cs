@@ -6,6 +6,7 @@ public class LogEntry : LogIndex
     /// Entry for the <see cref="IStateMachine"/>.
     /// </summary>
     public byte[] Entry { get; set; }
+    public RaftVoterChange? VoterChange { get; set; }
 
     public LogEntry()
     {

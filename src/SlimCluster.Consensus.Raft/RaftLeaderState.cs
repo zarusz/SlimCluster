@@ -33,6 +33,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
     private readonly ILogger<RaftLeaderState> _logger;
     private readonly RaftConsensusOptions _options;
     private readonly RaftVoterConfiguration _voters;
+    private readonly RaftVoterState? _voterState;
     private readonly IClusterMembership _clusterMembership;
     private readonly ILogRepository _logRepository;
     private readonly IStateMachine _stateMachine;
@@ -43,6 +44,25 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
     private readonly ConcurrentDictionary<int, TaskCompletionSource<object?>> _pendingCommandResults;
     private readonly SemaphoreSlim _commandRegistration = new(1, 1);
     private volatile bool _higherTermObserved;
+    private volatile bool _retired;
+    private VoterChangeRequest? _voterChangeRequest;
+
+    private sealed class VoterChangeRequest(string[] target, int catchUpIndex)
+    {
+        private const int Waiting = 0;
+        private const int Logging = 1;
+        private const int Canceled = 2;
+        private int _stage;
+
+        public string[] Target { get; } = target;
+        public int CatchUpIndex { get; } = catchUpIndex;
+        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool StartLogging() => Interlocked.CompareExchange(ref _stage, Logging, Waiting) != Canceled;
+        public bool CancelWhileWaiting() => Interlocked.CompareExchange(ref _stage, Canceled, Waiting) == Waiting;
+    }
+
+    internal bool Retired => _retired;
 
     public int Term { get; protected set; }
     public IDictionary<string, FollowerReplicatonState> ReplicationStateByNode { get; protected set; }
@@ -74,12 +94,14 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         ISerializer logSerializer,
         ITime time,
         OnNewerTermDiscovered onNewerTermDiscovered,
-        RaftVoterConfiguration voters)
+        RaftVoterConfiguration voters,
+        RaftVoterState? voterState = null)
         : base(logger)
     {
         _logger = logger;
         _options = options;
         _voters = voters;
+        _voterState = voterState;
         _clusterMembership = clusterMembership;
         _logSerializer = logSerializer;
         _logRepository = logRepository;
@@ -102,7 +124,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
     protected override async Task<bool> OnLoopRun(CancellationToken token)
     {
-        if (_higherTermObserved)
+        if (_higherTermObserved || _retired)
         {
             return true;
         }
@@ -115,9 +137,18 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
         // for each cluster member - replicate logs 
         var selfId = _clusterMembership.SelfMember.Node.Id;
+        var view = _voterState?.Current;
+        var changeRequest = Volatile.Read(ref _voterChangeRequest);
+        var committed = _logRepository.CommitedIndex;
         foreach (var member in _clusterMembership.OtherMembers
-            .Where(member => _voters.Contains(member.Node.Id) && member.Node.Id != selfId))
+            .Where(member => member.Node.Id != selfId))
         {
+            var id = member.Node.Id;
+            var voter = view?.CanReplicateTo(id, committed) ?? _voters.Contains(id);
+            if (!voter && changeRequest?.Target.Contains(id, StringComparer.Ordinal) != true)
+            {
+                continue;
+            }
             var followerReplicationState = EnsureReplicationState(member.Node.Id);
 
             // check if there are new logs to replicate
@@ -147,6 +178,10 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         if (!_higherTermObserved && !token.IsCancellationRequested)
         {
             idleRun &= await TryApplyLogs().ConfigureAwait(false);
+            if (_voterState != null)
+            {
+                idleRun &= !await AdvanceVoterChange(_voterState, selfId, token);
+            }
         }
 
         // idle run
@@ -206,7 +241,8 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
     private int FindMajorityReplicatedIndex()
     {
         var selfId = _clusterMembership.SelfMember.Node.Id;
-        var majorityIndex = ReplicationStateByNode
+        var majorityIndex = _voterState?.Current.QuorumIndex(id => id == selfId ? _logRepository.LastIndex.Index : GetMatchIndex(id))
+            ?? ReplicationStateByNode
             .Where(pair => _voters.Contains(pair.Key) && pair.Key != selfId)
             .Select(pair => pair.Value.MatchIndex)
             .Append(_logRepository.LastIndex.Index)
@@ -218,6 +254,109 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         return majorityIndex > committedIndex && _logRepository.GetTermAtIndex(majorityIndex) == Term
             ? majorityIndex
             : committedIndex;
+    }
+
+    private int GetMatchIndex(string id) => ReplicationStateByNode.TryGetValue(id, out var state) ? state.MatchIndex : 0;
+
+    internal async Task ChangeVoters(IReadOnlyCollection<string> voterIds, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        var target = RaftVoterConfiguration.ValidateVoterIds(voterIds);
+        var view = _voterState?.Current ?? throw new InvalidOperationException("Raft voter reconfiguration is disabled.");
+        if (_higherTermObserved || _retired || view.IsJoint || view.Index > _logRepository.CommitedIndex)
+        {
+            throw new InvalidOperationException("Raft is already changing voters or leadership has changed.");
+        }
+        if (target.SequenceEqual(view.NewIds, StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        var visibleIds = _clusterMembership.OtherMembers.Select(member => member.Node.Id).ToHashSet(StringComparer.Ordinal);
+        if (target.Any(id => !view.Contains(id) && !visibleIds.Contains(id)))
+        {
+            throw new ArgumentException("New voters must first be discovered through cluster membership.", nameof(voterIds));
+        }
+
+        var request = new VoterChangeRequest(target, _logRepository.LastIndex.Index);
+        if (Interlocked.CompareExchange(ref _voterChangeRequest, request, null) != null)
+        {
+            throw new InvalidOperationException("Raft is already changing voters.");
+        }
+
+        try
+        {
+            await request.Completion.Task.WaitAsync(_options.RequestTimeout, token);
+        }
+        finally
+        {
+            if (request.CancelWhileWaiting())
+            {
+                Interlocked.CompareExchange(ref _voterChangeRequest, null, request);
+            }
+        }
+    }
+
+    private async Task<bool> AdvanceVoterChange(RaftVoterState state, string selfId, CancellationToken token)
+    {
+        var view = state.Current;
+        var committed = _logRepository.CommitedIndex;
+        if (view.Index > committed)
+        {
+            return false;
+        }
+
+        if (view.IsJoint)
+        {
+            await AppendVoterChange(state, new RaftVoterChange(view.OldIds, view.NewIds, false), token);
+            return true;
+        }
+
+        var request = Volatile.Read(ref _voterChangeRequest);
+        if (request != null && view.NewIds.SequenceEqual(request.Target, StringComparer.Ordinal))
+        {
+            Interlocked.CompareExchange(ref _voterChangeRequest, null, request);
+            request.Completion.TrySetResult();
+            request = null;
+        }
+
+        if (!view.Contains(selfId))
+        {
+            _retired = true;
+            return false;
+        }
+
+        if (request != null && committed > 0 && _logRepository.GetTermAtIndex(committed) == Term
+            && request.Target.All(id => view.Contains(id) || GetMatchIndex(id) >= request.CatchUpIndex)
+            && request.StartLogging())
+        {
+            await AppendVoterChange(state, new RaftVoterChange(view.NewIds, request.Target, true), token);
+            return true;
+        }
+        return false;
+    }
+
+    private async Task AppendVoterChange(RaftVoterState state, RaftVoterChange change, CancellationToken token)
+    {
+        await _commandRegistration.WaitAsync(token);
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            var index = _logRepository.LastIndex.Index + 1;
+            await _logRepository.Append(new[] { new LogEntry(index, Term, Array.Empty<byte>()) { VoterChange = change } });
+            state.Append(index, change);
+        }
+        finally
+        {
+            _commandRegistration.Release();
+        }
+    }
+
+    protected override async Task OnStopping()
+    {
+        Interlocked.Exchange(ref _voterChangeRequest, null)?.Completion.TrySetException(
+            new RaftClusterException("Leadership changed before the voter change was confirmed."));
+        await base.OnStopping();
     }
 
     protected internal async Task ReplicateLogWithFollower(LogIndex lastIndex, FollowerReplicatonState followerReplicationState, INode followerNode, bool skipEntries, CancellationToken token)
@@ -255,8 +394,11 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
             if (resp.Term > Term)
             {
-                _higherTermObserved = true;
-                await _onNewerTermDiscovered(resp.Term, followerNode);
+                if (_voterState?.Current.Contains(followerNode.Id) != false)
+                {
+                    _higherTermObserved = true;
+                    await _onNewerTermDiscovered(resp.Term, followerNode);
+                }
                 return;
             }
             if (resp.Term < Term)
@@ -357,7 +499,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
     public async Task<object?> OnClientRequest(object command, CancellationToken token)
     {
-        if (_higherTermObserved)
+        if (_higherTermObserved || _retired || _voterState?.Current.Contains(_clusterMembership.SelfMember.Node.Id) == false)
         {
             throw new RaftClusterException("Leadership has changed.");
         }
