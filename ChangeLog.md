@@ -1,5 +1,7 @@
 # Changelog
 
+Unreleased changes appear first, followed by releases in reverse chronological order, newest to oldest.
+
 ## Unreleased
 
 ### Raft safety
