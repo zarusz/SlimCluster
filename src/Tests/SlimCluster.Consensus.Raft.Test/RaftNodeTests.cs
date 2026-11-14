@@ -42,6 +42,84 @@ public class RaftNodeTests : AbstractRaftIntegrationTest, IAsyncLifetime
     public async Task DisposeAsync() => await _subject.DisposeAsync();
 
     [Fact]
+    public async Task Given_DiscoveredNonVoter_When_ItSendsRaftMessages_Then_CandidateIgnoresThem()
+    {
+        var outsider = new Member(new Node("outsider", "192.168.1.42", 6200), _now);
+        _otherMembers.Add(outsider);
+        await FromFollowerToCandidate();
+        var term = _subject.CurrentTerm;
+
+        await _subject.OnMessageArrived(new RequestVoteResponse(new RequestVoteRequest())
+            { Term = term, VoteGranted = true }, outsider.Node.Address);
+        await _subject.OnLoopRunProxy();
+        await _subject.OnMessageArrived(new AppendEntriesRequest
+            { Term = term + 1, LeaderId = outsider.Node.Id }, outsider.Node.Address);
+        await _subject.OnLoopRunProxy();
+
+        _subject.Status.Should().Be(RaftNodeStatus.Candidate);
+        _subject.CurrentTerm.Should().Be(term);
+        _messageSenderMock.Verify(x => x.SendMessage(It.IsAny<object>(), outsider.Node.Address), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Given_DivergentSuffix_When_LeaderCommitExceedsVerifiedPrefix_Then_AppliesOnlyVerifiedEntries(bool appendEntry)
+    {
+        var repository = _logRepositoryMock.Object;
+        await repository.Append(1, Array.Empty<byte>());
+        await repository.Append(1, Array.Empty<byte>());
+        await repository.Append(1, new byte[] { 42 });
+        var leader = _otherMembers[0].Node;
+        var entries = appendEntry ? new[] { new LogEntry(2, 1, Array.Empty<byte>()) } : null;
+
+        await _subject.OnMessageArrived(new AppendEntriesRequest
+        {
+            Term = 2,
+            LeaderId = leader.Id,
+            PrevLogIndex = 1,
+            PrevLogTerm = 1,
+            LeaderCommitIndex = 3,
+            Entries = entries
+        }, leader.Address);
+        await _subject.OnLoopRunProxy();
+
+        repository.CommitedIndex.Should().Be(appendEntry ? 2 : 1);
+        _stateMachineMock.Verify(x => x.Apply(It.IsAny<object>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Given_SelfVote_When_ChangedRole_Then_CannotVoteForAnotherCandidateInSameTerm(bool becameLeader)
+    {
+        await FromFollowerToCandidate();
+        var term = _subject.CurrentTerm;
+        var peer = _otherMembers[0].Node;
+        if (becameLeader)
+        {
+            await _subject.OnMessageArrived(new RequestVoteResponse(new RequestVoteRequest())
+                { Term = term, VoteGranted = true }, peer.Address);
+        }
+        else
+        {
+            await _subject.OnMessageArrived(new AppendEntriesRequest
+                { Term = term, LeaderId = peer.Id }, peer.Address);
+        }
+        await _subject.OnLoopRunProxy();
+        _subject.Status.Should().Be(becameLeader ? RaftNodeStatus.Leader : RaftNodeStatus.Follower);
+
+        await _subject.OnMessageArrived(new RequestVoteRequest
+            { Term = term, CandidateId = peer.Id, LastLogTerm = term, LastLogIndex = 1 }, peer.Address);
+        await _subject.OnLoopRunProxy();
+
+        _messageSenderMock.Verify(x => x.SendMessage(
+            It.Is<RequestVoteResponse>(r => r.Term == term && !r.VoteGranted), peer.Address), Times.Once);
+        // These tests step the node loop manually, so the separately started leader needs to step down here.
+        await _subject.OnNewerTermDiscovered(term + 1, peer);
+    }
+
+    [Fact]
     public async Task Given_New_Then_IsNotStarted()
     {
         // arrange
@@ -297,6 +375,7 @@ public class RaftNodeTests : AbstractRaftIntegrationTest, IAsyncLifetime
         _logRepositoryMock.Verify(x => x.Commit(currentCommitIndex + 1), Times.Once());
         _logRepositoryMock.Verify(x => x.GetLogsAtIndex(currentCommitIndex + 1, 1), Times.Once());
         _logRepositoryMock.VerifyGet(x => x.LastIndex, Times.AtLeast(1));
+        _logRepositoryMock.VerifyGet(x => x.LastCompactedIndex, Times.Once());
         _logRepositoryMock.VerifyGet(x => x.CommitedIndex, Times.AtLeast(1));
         _logRepositoryMock.VerifyNoOtherCalls();
 

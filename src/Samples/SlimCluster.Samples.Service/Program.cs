@@ -48,7 +48,7 @@ builder.Services.AddSlimCluster(cfg =>
     // Setup Raft Cluster Consensus
     cfg.AddRaftConsensus(opts =>
     {
-        opts.NodeCount = 3;
+        opts.VoterIds = builder.Configuration.GetSection("RaftVoterIds").Get<string[]>() ?? new[] { cfg.NodeId };
 
         // Use custom values or remove and use defaults
         opts.LeaderTimeout = TimeSpan.FromSeconds(5);

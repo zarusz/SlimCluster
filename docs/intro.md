@@ -284,7 +284,7 @@ To add the Raft plugin register it:
 // Setup Raft Cluster Consensus
 cfg.AddRaftConsensus(opts =>
 {
-    opts.NodeCount = 3;
+    opts.VoterIds = new[] { "node-1", "node-2", "node-3" };
 
     // Use custom values or remove and use defaults
     opts.LeaderTimeout = TimeSpan.FromSeconds(5);
@@ -405,7 +405,7 @@ Raft configuration parameters refer to the properties inside the `opts` object (
 // Setup Raft Cluster Consensus
 cfg.AddRaftConsensus(opts =>
 {
-    opts.NodeCount = 3;
+    opts.VoterIds = new[] { "node-1", "node-2", "node-3" };
 
     // Use custom values or remove and use defaults
     opts.LeaderTimeout = TimeSpan.FromSeconds(5);
@@ -415,7 +415,9 @@ cfg.AddRaftConsensus(opts =>
 });
 ```
 
-- `NodeCount` sets the expected node count of the cluster. This is needed to be able to calculate the majority of nodes.
+- `VoterIds` is required. Use the same list of stable, unique node IDs on every Raft node and set each node's `ClusterConfiguration.NodeId` to its own ID from that list. Raft needs a majority of the configured voters even when SWIM loses contact with some of them.
+- `NodeCount` is optional. If set, it must equal the length of `VoterIds`. Existing deployments that configured only `NodeCount` must now supply the voter list. Coordinate the upgrade across the cluster because older versions calculate a majority from their current SWIM view. Changing the voter list of a running cluster requires a Raft reconfiguration protocol.
+- `RequestTimeout` bounds how long a client waits for a command result. A `TimeoutException` means the outcome is unknown. The command may still commit later.
 - `LeaderTimeout` — time a follower waits without hearing from a leader before starting an election.
 - `LeaderPingInterval` — how often the leader sends heartbeats to followers.
 - `ElectionTimeoutMin` / `ElectionTimeoutMax` — randomised election timeout range (randomisation prevents split votes).

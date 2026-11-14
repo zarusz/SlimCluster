@@ -11,3 +11,15 @@ spec:
     protocol: TCP
   selector:
     run: sc-service
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sc-service-peers
+spec:
+  clusterIP: None
+  ports:
+  - port: 60001
+    protocol: UDP
+  selector:
+    run: sc-service

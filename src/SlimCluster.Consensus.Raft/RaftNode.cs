@@ -20,6 +20,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
     private readonly IClusterMembership _clusterMembership;
     private readonly IMessageSender _messageSender;
     private readonly RaftConsensusOptions _options;
+    private readonly RaftVoterConfiguration _voters;
     private readonly ISerializer _logSerializer;
     private readonly ITime _time;
     private readonly IStateMachine _stateMachine;
@@ -53,6 +54,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
     private int _installingSnapshotLastIncludedTerm;
 
     private readonly ConcurrentQueue<(RaftMessage Message, IAddress Address)> _messages = new();
+    private readonly ConcurrentQueue<(int Term, INode Node)> _higherTerms = new();
 
     public int CurrentTerm => _currentTerm;
 
@@ -92,6 +94,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         _messageSender = messageSender;
         _stateMachine = stateMachine;
         _options = options.Value;
+        _voters = new RaftVoterConfiguration(_options, _clusterMembership.SelfMember.Node.Id);
 
         _logSerializer = (ISerializer)_serviceProvider.GetRequiredService(_options.LogSerializerType);
 
@@ -137,10 +140,18 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         _candidateState.AddVote(_votedFor);
         await PersistPersistentState();
 
+        if (_voters.Majority == 1)
+        {
+            await BecomeLeader();
+            return;
+        }
+
         // request votes from each other node
         var lastIndex = _logRepository.LastIndex;
         var r = new RequestVoteRequest { CandidateId = _clusterMembership.SelfMember.Node.Id, Term = _currentTerm, LastLogIndex = lastIndex.Index, LastLogTerm = lastIndex.Term };
-        var tasks = _clusterMembership.OtherMembers.Select(member => _messageSender.SendMessage(r, member.Node.Address));
+        var tasks = _clusterMembership.OtherMembers
+            .Where(member => _voters.Contains(member.Node.Id) && member.Node.Id != _votedFor)
+            .Select(member => _messageSender.SendMessage(r, member.Node.Address));
         await Task.WhenAll(tasks);
     }
 
@@ -150,7 +161,10 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         Status = RaftNodeStatus.Follower;
         await ClearPreviousState();
 
-        UpdateTerm(term);
+        if (term > _currentTerm)
+        {
+            UpdateTerm(term);
+        }
         await PersistPersistentState();
 
         _followerState = new RaftFollowerState(_loggerFactory.CreateLogger<RaftFollowerState>(), _options, _time, _currentTerm, null);
@@ -198,7 +212,8 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             _stateMachine,
             _logSerializer,
             _time,
-            OnNewerTermDiscovered);
+            ObserveHigherTerm,
+            _voters);
 
         await _leaderState.Start();
     }
@@ -222,7 +237,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         else
         {
             resp.Term = r.Term;
-            if (_votedFor == null || _votedFor == node.Id)
+            if (r.CandidateId == node.Id && (_votedFor == null || _votedFor == node.Id))
             {
                 // Raft §5.4.1: candidate log is up-to-date if its last term is higher,
                 // or same term but index is at least as long as ours.
@@ -269,27 +284,31 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             {
                 _candidateState!.AddVote(node.Id);
 
-                // If majority votes, then claim leadership
-                var nodeCount = _clusterMembership.OtherMembers.Count + 1;
-                if (_candidateState!.RecivedVotesFrom.Count > nodeCount / 2)
+                if (_candidateState.RecivedVotesFrom.Count >= _voters.Majority)
                 {
-                    _logger.LogInformation("Recieved majority of votes {VoteCount} from cluster of {NodeCount} in term {Term}", _candidateState!.RecivedVotesFrom.Count, nodeCount, _currentTerm);
-
-                    // clear who was voted for
-                    _votedFor = null;
-                    await PersistPersistentState();
-
+                    _logger.LogInformation("Received {VoteCount} votes in term {Term}", _candidateState.RecivedVotesFrom.Count, _currentTerm);
                     await BecomeLeader();
                 }
             }
         }
     }
 
-    internal async Task OnNewerTermDiscovered(int term, INode node)
+    private Task ObserveHigherTerm(int term, INode node)
     {
-        // become follower immediately
+        // The node loop owns role changes. The leader loop must not wait for itself to stop.
+        _higherTerms.Enqueue((term, node));
+        return Task.CompletedTask;
+    }
+
+    internal Task OnNewerTermDiscovered(int term, INode node)
+    {
+        if (term <= _currentTerm)
+        {
+            return Task.CompletedTask;
+        }
+
         _logger.LogInformation("{Node}: Node indicated there is a higher term {Term}", node, term);
-        await BecomeFollower(term);
+        return BecomeFollower(term);
     }
 
     private Task SendAppendEntriesResponse(AppendEntriesRequest r, INode node, bool success)
@@ -328,7 +347,8 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         }
         _followerState?.OnLeaderMessage(node);
 
-        if (_logRepository.LastIndex.Index < r.PrevLogIndex
+        if (r.PrevLogIndex < _logRepository.LastCompactedIndex.Index
+            || _logRepository.LastIndex.Index < r.PrevLogIndex
             || r.PrevLogIndex == 0 && r.PrevLogTerm != 0
             || r.PrevLogIndex > 0 && _logRepository.GetTermAtIndex(r.PrevLogIndex) != r.PrevLogTerm)
         {
@@ -338,8 +358,19 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             return;
         }
 
+        var lastVerifiedIndex = r.PrevLogIndex;
         if (r.Entries != null && r.Entries.Count > 0)
         {
+            foreach (var entry in r.Entries)
+            {
+                if (entry.Index != lastVerifiedIndex + 1)
+                {
+                    await SendAppendEntriesResponse(r, node, success: false);
+                    return;
+                }
+                lastVerifiedIndex = entry.Index;
+            }
+
             try
             {
                 await _logRepository.Append(r.Entries);
@@ -357,10 +388,10 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
         // Apply logs in the local state machine if leader has a higher commit index
         var commitedIndex = _logRepository.CommitedIndex;
-        if (r.LeaderCommitIndex > commitedIndex)
+        var newCommitIndex = Math.Min(r.LeaderCommitIndex, lastVerifiedIndex);
+        if (newCommitIndex > commitedIndex)
         {
             var indexStart = commitedIndex + 1;
-            var newCommitIndex = Math.Min(r.LeaderCommitIndex, _logRepository.LastIndex.Index);
             var logsCount = newCommitIndex - commitedIndex;
             var logs = await _logRepository.GetLogsAtIndex(indexStart, logsCount).ConfigureAwait(false);
             for (var i = 0; i < logsCount; i++)
@@ -453,13 +484,19 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
     {
         var idleRun = true;
 
+        while (_higherTerms.TryDequeue(out var observed))
+        {
+            await OnNewerTermDiscovered(observed.Term, observed.Node);
+            idleRun = false;
+        }
+
         if (_messages.TryDequeue(out var arrivedMessage))
         {
             // ToDo: Check if message already expires, if so skip
 
             var address = arrivedMessage.Address;
             var node = _clusterMembership.OtherMembers.FirstOrDefault(x => x.Node.Address.Equals(address))?.Node;
-            if (node != null)
+            if (node != null && _voters.Contains(node.Id) && node.Id != _clusterMembership.SelfMember.Node.Id)
             {
                 _logger.LogDebug("Recieved {MessageType} from node {Node}", arrivedMessage.Message.GetType().Name, node);
 
@@ -467,8 +504,8 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
                 {
                     RequestVoteRequest r => OnRequestVoteRequest(r, node),
                     RequestVoteResponse r => OnRequestVoteResponse(r, node),
-                    AppendEntriesRequest r => OnAppendEntriesRequest(r, node),
-                    InstallSnapshotRequest r => OnInstallSnapshotRequest(r, node),
+                    AppendEntriesRequest r when r.LeaderId == node.Id => OnAppendEntriesRequest(r, node),
+                    InstallSnapshotRequest r when r.LeaderId == node.Id => OnInstallSnapshotRequest(r, node),
                     _ => null
                 };
                 if (task != null)
@@ -479,7 +516,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             }
             else
             {
-                _logger.LogWarning("Could not match Node based on address {NodeAddress} from the memberlist", address);
+                _logger.LogDebug("Ignoring Raft message from {NodeAddress}: no matching remote voter", address);
             }
         }
 
@@ -535,6 +572,11 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         _votedFor = state.Get<string?>("votedFor");
         _currentTerm = state.Get<int>("currentTerm");
         var restoredStatus = RaftNodeStatus.FromId(state.Get<Guid>("statusId"));
+        if (restoredStatus == RaftNodeStatus.Leader)
+        {
+            // Older versions cleared the self-vote when becoming leader.
+            _votedFor ??= _clusterMembership.SelfMember.Node.Id;
+        }
 
         ClearPreviousState().GetAwaiter().GetResult();
         if (restoredStatus == RaftNodeStatus.Unknown)
@@ -566,7 +608,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
     public Task<object?> OnClientRequest(object command, CancellationToken token)
     {
         var leaderState = _leaderState;
-        if (leaderState == null)
+        if (leaderState == null || Status != RaftNodeStatus.Leader)
         {
             throw new ClusterException($"The current node is not the leader, so it cannot handle client requests. Last known leader node: {_followerState?.Leader}");
         }

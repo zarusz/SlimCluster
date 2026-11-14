@@ -24,7 +24,13 @@ public class RaftConsensusOptions
     public TimeSpan LeaderPingInterval { get; set; } = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
-    /// Defines the target cluster size. It is used to calculate majority of nodes.
+    /// The stable IDs of all Raft voters, including the local node.
+    /// Every voter must use the same list.
+    /// </summary>
+    public string[] VoterIds { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Optional expected voter count. When specified, it must match the number of voter IDs.
     /// </summary>
     public int NodeCount { get; set; }
 

@@ -16,7 +16,7 @@ public class IPMessageEndpoint : TaskLoop, IMessageSender, IAsyncDisposable, ICl
     private readonly IPAddress? _multicastGroupAddress;
     private readonly IAddress? _multicaseGroupEndpoint;
 
-    private readonly ConcurrentDictionary<Guid, TaskCompletionSource<object>> _requests = new();
+    private readonly ConcurrentDictionary<Guid, (IPEndPoint Address, TaskCompletionSource<object> Completion)> _requests = new();
 
     private ISocketClient? _socketClient;
 
@@ -138,8 +138,8 @@ public class IPMessageEndpoint : TaskLoop, IMessageSender, IAsyncDisposable, ICl
         where TResponse : class, IResponse
     {
         var requestId = request.RequestId;
-        var requestSource = new TaskCompletionSource<object>();
-        _requests[requestId] = requestSource;
+        var requestSource = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _requests[requestId] = (address.ToIPEndPoint(), requestSource);
         try
         {
             var timeoutTask = Task.Delay(timeout ?? _options.RequestTimeout);
@@ -214,9 +214,10 @@ public class IPMessageEndpoint : TaskLoop, IMessageSender, IAsyncDisposable, ICl
             // Handle responses
             if (message is IResponse response)
             {
-                if (_requests.TryGetValue(response.RequestId, out var requestSource))
+                if (_requests.TryGetValue(response.RequestId, out var pending)
+                    && pending.Address.Equals(remoteAddress.ToIPEndPoint()))
                 {
-                    requestSource.TrySetResult(message);
+                    pending.Completion.TrySetResult(message);
                 }
             }
         }

@@ -21,6 +21,7 @@ The strategic aim for SlimCluster is to implement other algorithms to make distr
 ## Docs
 
 - [Introduction](docs/intro.md)
+- [Roadmap](docs/Roadmap.md)
 
 ## Packages
 

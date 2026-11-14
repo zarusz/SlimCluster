@@ -33,7 +33,7 @@ public abstract class AbstractRaftIntegrationTest
 
         _options = new RaftConsensusOptions
         {
-            NodeCount = 3
+            VoterIds = new[] { "Node-01", "Node-02", "Node-03" }
         };
 
         static Node GetNode(int i) => new($"Node-{i:00}", $"192.168.1.{i}", 6200);

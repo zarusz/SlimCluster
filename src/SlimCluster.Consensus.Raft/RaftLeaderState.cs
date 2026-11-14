@@ -1,7 +1,6 @@
 ﻿namespace SlimCluster.Consensus.Raft;
 
 using System.Collections.Concurrent;
-using System.Diagnostics;
 
 using SlimCluster.Consensus.Raft.Logs;
 using SlimCluster.Host.Common;
@@ -33,6 +32,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 {
     private readonly ILogger<RaftLeaderState> _logger;
     private readonly RaftConsensusOptions _options;
+    private readonly RaftVoterConfiguration _voters;
     private readonly IClusterMembership _clusterMembership;
     private readonly ILogRepository _logRepository;
     private readonly IStateMachine _stateMachine;
@@ -41,6 +41,8 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
     private readonly ITime _time;
     private readonly OnNewerTermDiscovered _onNewerTermDiscovered;
     private readonly ConcurrentDictionary<int, TaskCompletionSource<object?>> _pendingCommandResults;
+    private readonly SemaphoreSlim _commandRegistration = new(1, 1);
+    private volatile bool _higherTermObserved;
 
     public int Term { get; protected set; }
     public IDictionary<string, FollowerReplicatonState> ReplicationStateByNode { get; protected set; }
@@ -56,10 +58,28 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         ISerializer logSerializer,
         ITime time,
         OnNewerTermDiscovered onNewerTermDiscovered)
+        : this(logger, term, options, clusterMembership, messageSender, logRepository, stateMachine, logSerializer, time,
+            onNewerTermDiscovered, new RaftVoterConfiguration(options, clusterMembership.SelfMember.Node.Id))
+    {
+    }
+
+    internal RaftLeaderState(
+        ILogger<RaftLeaderState> logger,
+        int term,
+        RaftConsensusOptions options,
+        IClusterMembership clusterMembership,
+        IMessageSender messageSender,
+        ILogRepository logRepository,
+        IStateMachine stateMachine,
+        ISerializer logSerializer,
+        ITime time,
+        OnNewerTermDiscovered onNewerTermDiscovered,
+        RaftVoterConfiguration voters)
         : base(logger)
     {
         _logger = logger;
         _options = options;
+        _voters = voters;
         _clusterMembership = clusterMembership;
         _logSerializer = logSerializer;
         _logRepository = logRepository;
@@ -82,14 +102,21 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
     protected override async Task<bool> OnLoopRun(CancellationToken token)
     {
+        if (_higherTermObserved)
+        {
+            return true;
+        }
+
         var tasks = new List<Task>();
 
         var lastIndex = _logRepository.LastIndex;
         var now = _time.Now;
-        var idleRun = false;
+        var idleRun = true;
 
         // for each cluster member - replicate logs 
-        foreach (var member in _clusterMembership.OtherMembers)
+        var selfId = _clusterMembership.SelfMember.Node.Id;
+        foreach (var member in _clusterMembership.OtherMembers
+            .Where(member => _voters.Contains(member.Node.Id) && member.Node.Id != selfId))
         {
             var followerReplicationState = EnsureReplicationState(member.Node.Id);
 
@@ -117,10 +144,10 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
             idleRun = false;
         }
 
-        // ToDo: Remove lost nodes from ReplicationStateByNode (after some idle time)
-
-        // ToDo: Perhaps run in a separate task loop
-        idleRun &= await TryApplyLogs().ConfigureAwait(false);
+        if (!_higherTermObserved && !token.IsCancellationRequested)
+        {
+            idleRun &= await TryApplyLogs().ConfigureAwait(false);
+        }
 
         // idle run
         return idleRun;
@@ -160,34 +187,37 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
             var commandResult = await _stateMachine.Apply(_logRepository, logEntry: logs[i].Entry, logIndex: index, _logger, _logSerializer);
 
             // Signal that this changed and pass result
-            if (_pendingCommandResults.TryGetValue(index, out var tcs))
+            await _commandRegistration.WaitAsync().ConfigureAwait(false);
+            try
             {
-                _logger.LogDebug("Set result to {Result}", commandResult);
-                tcs.TrySetResult(commandResult);
+                if (_pendingCommandResults.TryGetValue(index, out var tcs))
+                {
+                    _logger.LogDebug("Set result to {Result}", commandResult);
+                    tcs.TrySetResult(commandResult);
+                }
+            }
+            finally
+            {
+                _commandRegistration.Release();
             }
         }
     }
 
     private int FindMajorityReplicatedIndex()
     {
-        var majorityCount = (_clusterMembership.OtherMembers.Count + 1) / 2;
-
-        // Include the leader's own match index (its last log index) alongside followers.
-        // ToDo: Do not take into account inactive members
-        var leaderMatchIndex = _logRepository.LastIndex.Index;
-        var orderedMatchIndexes = ReplicationStateByNode.Values.Select(x => x.MatchIndex)
-            .Append(leaderMatchIndex)
+        var selfId = _clusterMembership.SelfMember.Node.Id;
+        var majorityIndex = ReplicationStateByNode
+            .Where(pair => _voters.Contains(pair.Key) && pair.Key != selfId)
+            .Select(pair => pair.Value.MatchIndex)
+            .Append(_logRepository.LastIndex.Index)
             .OrderByDescending(x => x)
-            .ToList();
+            .Skip(_voters.Majority - 1)
+            .FirstOrDefault();
 
-        var majorityMatchIndex = orderedMatchIndexes.FirstOrDefault(matchIndex =>
-        {
-            return matchIndex > _logRepository.CommitedIndex
-                && _logRepository.GetTermAtIndex(matchIndex) == Term
-                && orderedMatchIndexes.Count(x => x >= matchIndex) > majorityCount;
-        });
-
-        return Math.Max(majorityMatchIndex, _logRepository.CommitedIndex);
+        var committedIndex = _logRepository.CommitedIndex;
+        return majorityIndex > committedIndex && _logRepository.GetTermAtIndex(majorityIndex) == Term
+            ? majorityIndex
+            : committedIndex;
     }
 
     protected internal async Task ReplicateLogWithFollower(LogIndex lastIndex, FollowerReplicatonState followerReplicationState, INode followerNode, bool skipEntries, CancellationToken token)
@@ -223,6 +253,17 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
             // when the response arrives, update the timestamp of when the request was sent
             followerReplicationState.LastAppendRequest = _time.Now;
 
+            if (resp.Term > Term)
+            {
+                _higherTermObserved = true;
+                await _onNewerTermDiscovered(resp.Term, followerNode);
+                return;
+            }
+            if (resp.Term < Term)
+            {
+                return;
+            }
+
             if (resp.Success)
             {
                 var count = req.Entries?.Count ?? 0;
@@ -236,13 +277,6 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
             }
             else
             {
-                // if higher term discoverd
-                if (resp.Term > Term)
-                {
-                    await _onNewerTermDiscovered(resp.Term, followerNode);
-                    return;
-                }
-
                 _logger.LogInformation("{Node}: Follower log does not match at MatchIndex = {MatchIndex}", followerNode, followerReplicationState.MatchIndex);
                 // logs dont match for the specified index, will retry on next loop run with prev index
                 followerReplicationState.NextIndex = Math.Max(1, followerReplicationState.NextIndex - 1);
@@ -287,11 +321,12 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
             if (resp.Term > Term)
             {
+                _higherTermObserved = true;
                 await _onNewerTermDiscovered(resp.Term, followerNode).ConfigureAwait(false);
                 return;
             }
 
-            if (!resp.Success)
+            if (resp.Term < Term || !resp.Success)
             {
                 return;
             }
@@ -322,33 +357,35 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
     public async Task<object?> OnClientRequest(object command, CancellationToken token)
     {
+        if (_higherTermObserved)
+        {
+            throw new RaftClusterException("Leadership has changed.");
+        }
+        token.ThrowIfCancellationRequested();
+
         using var _ = _logger.BeginScope("Command {Command} processing", command.GetType().Name);
 
-        // Append log to local node (must be thread-safe)
-        var log = _logSerializer.Serialize(command);
-        var commandIndex = await _logRepository.Append(Term, log);
-        _logger.LogTrace("Appended command at index {Index} in term {Term}", commandIndex, Term);
-
-        var requestTimer = Stopwatch.StartNew();
-
         var tcs = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingCommandResults.TryAdd(commandIndex, tcs);
+        int commandIndex;
+        // A fast commit can apply the entry before the client finishes registering its completion.
+        var log = _logSerializer.Serialize(command);
+        await _commandRegistration.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            // Wait until index committed (replicated to majority of nodes) and applied to state machine
-            while (requestTimer.Elapsed < _options.RequestTimeout)
-            {
-                token.ThrowIfCancellationRequested();
+            commandIndex = await _logRepository.Append(Term, log).ConfigureAwait(false);
+            _pendingCommandResults.TryAdd(commandIndex, tcs);
+        }
+        finally
+        {
+            _commandRegistration.Release();
+        }
+        _logger.LogTrace("Appended command at index {Index} in term {Term}", commandIndex, Term);
 
-                var t = await Task.WhenAny(tcs.Task, Task.Delay(50, token));
-
-                if (t == tcs.Task)
-                {
-                    var result = tcs.Task.Result;
-                    _logger.LogInformation("Command {Command} result is {Result}", command, result);
-                    return result;
-                }
-            }
+        try
+        {
+            var result = await tcs.Task.WaitAsync(_options.RequestTimeout, token).ConfigureAwait(false);
+            _logger.LogInformation("Command {Command} result is {Result}", command, result);
+            return result;
         }
         finally
         {
@@ -358,7 +395,6 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
             // Clean up pending commands
             _pendingCommandResults.TryRemove(commandIndex, out var _);
         }
-        return null;
     }
 
     #region IDurableComponent
