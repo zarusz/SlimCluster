@@ -24,6 +24,9 @@ public record FollowerReplicatonState
     /// Last point in time when the <see cref="AppendEntriesRequest"/> was sent to the follower.
     /// </summary>
     public DateTimeOffset? LastAppendRequest { get; set; }
+
+    internal DateTimeOffset? LastSuccessfulAppend { get; set; }
+    internal IAddress? LastSuccessfulAddress { get; set; }
 }
 
 public delegate Task OnNewerTermDiscovered(int term, INode node);
@@ -34,6 +37,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
     private readonly RaftConsensusOptions _options;
     private readonly RaftVoterConfiguration _voters;
     private readonly RaftVoterState? _voterState;
+    private readonly RaftAutomaticVoterReplacement? _automaticReplacement;
     private readonly IClusterMembership _clusterMembership;
     private readonly ILogRepository _logRepository;
     private readonly IStateMachine _stateMachine;
@@ -47,7 +51,9 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
     private volatile bool _retired;
     private VoterChangeRequest? _voterChangeRequest;
 
-    private sealed class VoterChangeRequest(string[] target, int catchUpIndex)
+    private sealed record AutomaticReplacement(string RemovedId, string LearnerId, IAddress Address, DateTimeOffset ProbedAt);
+
+    private sealed class VoterChangeRequest(string[] target, int catchUpIndex, AutomaticReplacement? replacement = null)
     {
         private const int Waiting = 0;
         private const int Logging = 1;
@@ -57,6 +63,7 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         public string[] Target { get; } = target;
         public int CatchUpIndex { get; } = catchUpIndex;
         public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public AutomaticReplacement? Replacement { get; } = replacement;
 
         public bool StartLogging() => Interlocked.CompareExchange(ref _stage, Logging, Waiting) != Canceled;
         public bool CancelWhileWaiting() => Interlocked.CompareExchange(ref _stage, Canceled, Waiting) == Waiting;
@@ -102,6 +109,10 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         _options = options;
         _voters = voters;
         _voterState = voterState;
+        if (voterState != null && options.AutomaticVoterReplacementDelay is { } delay)
+        {
+            _automaticReplacement = new RaftAutomaticVoterReplacement(delay, options.AutomaticVoterReplacementCandidate);
+        }
         _clusterMembership = clusterMembership;
         _logSerializer = logSerializer;
         _logRepository = logRepository;
@@ -138,6 +149,10 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         // for each cluster member - replicate logs 
         var selfId = _clusterMembership.SelfMember.Node.Id;
         var view = _voterState?.Current;
+        if (_automaticReplacement != null && view != null)
+        {
+            _automaticReplacement.Observe(view, _clusterMembership.OtherMembers, selfId, now);
+        }
         var changeRequest = Volatile.Read(ref _voterChangeRequest);
         var committed = _logRepository.CommitedIndex;
         foreach (var member in _clusterMembership.OtherMembers
@@ -326,25 +341,135 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
             return false;
         }
 
-        if (request != null && committed > 0 && _logRepository.GetTermAtIndex(committed) == Term
-            && request.Target.All(id => view.Contains(id) || GetMatchIndex(id) >= request.CatchUpIndex)
-            && request.StartLogging())
+        if (committed == 0 || _logRepository.GetTermAtIndex(committed) != Term)
         {
-            await AppendVoterChange(state, new RaftVoterChange(view.NewIds, request.Target, true), token);
-            return true;
+            return false;
+        }
+
+        if (request == null && _automaticReplacement != null)
+        {
+            return await TryProposeAutomaticReplacement(state, view, selfId, token);
+        }
+
+        if (request != null && request.Target.All(id => view.Contains(id) || GetMatchIndex(id) >= request.CatchUpIndex))
+        {
+            return await AppendVoterChange(state, new RaftVoterChange(view.NewIds, request.Target, true), token, request);
+        }
+        if (request?.Replacement is { } replacement)
+        {
+            CheckAutomaticReplacement(view, selfId, request, replacement);
         }
         return false;
     }
 
-    private async Task AppendVoterChange(RaftVoterState state, RaftVoterChange change, CancellationToken token)
+    private async Task<bool> TryProposeAutomaticReplacement(RaftVoterState state, RaftVoterView view, string selfId, CancellationToken token)
+    {
+        var policy = _automaticReplacement!;
+        var now = _time.Now;
+        var members = _clusterMembership.OtherMembers;
+        policy.Observe(view, members, selfId, now);
+        var removedId = policy.FindMissingVoter(now);
+        if (removedId == null || now < policy.ProbeAgainAt || !HasRecentVoterQuorum(view, members, selfId, now))
+        {
+            return false;
+        }
+
+        policy.ProbeAgainAt = now + _options.LeaderPingInterval;
+        var candidates = members.Where(member => !state.HasEverVoted(member.Node.Id) && policy.IsEligibleLearner(member, now))
+            .OrderBy(member => member.Node.Id, StringComparer.Ordinal);
+        var probes = candidates.Select(async member =>
+        {
+            var address = member.Node.Address;
+            var isLearner = await ProbeLearner(address);
+            return (Id: member.Node.Id, Address: address, IsLearner: isLearner);
+        });
+        foreach (var candidate in await Task.WhenAll(probes))
+        {
+            if (!candidate.IsLearner)
+            {
+                continue;
+            }
+
+            token.ThrowIfCancellationRequested();
+            var target = view.NewIds.Where(id => id != removedId).Append(candidate.Id).Order(StringComparer.Ordinal).ToArray();
+            var replacement = new AutomaticReplacement(removedId, candidate.Id, candidate.Address, _time.Now);
+            var request = new VoterChangeRequest(target, _logRepository.LastIndex.Index, replacement);
+            if (Interlocked.CompareExchange(ref _voterChangeRequest, request, null) == null)
+            {
+                _logger.LogInformation("Preparing automatic Raft voter replacement from {RemovedVoter} to {Learner}", removedId, candidate.Id);
+                return true;
+            }
+            break;
+        }
+        return false;
+    }
+
+    private async Task<bool> ProbeLearner(IAddress address)
+    {
+        try
+        {
+            var response = await _messageSender.SendRequest(new LearnerProbeRequest(), address, _options.LeaderPingInterval);
+            return response.IsStandbyLearner;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    private bool CheckAutomaticReplacement(RaftVoterView view, string selfId, VoterChangeRequest request, AutomaticReplacement replacement)
+    {
+        var now = _time.Now;
+        var members = _clusterMembership.OtherMembers;
+        var policy = _automaticReplacement!;
+        policy.Observe(view, members, selfId, now);
+        var learner = members.FirstOrDefault(member => member.Node.Id == replacement.LearnerId);
+        var learnerReady = HadRecentAppend(replacement.LearnerId, replacement.Address, now);
+        if (!policy.IsMissing(replacement.RemovedId, now)
+            || learner == null || !replacement.Address.Equals(learner.Node.Address) || !policy.IsEligibleLearner(learner, now)
+            || (!learnerReady && now - replacement.ProbedAt >= _options.LeaderTimeout))
+        {
+            if (request.CancelWhileWaiting())
+            {
+                Interlocked.CompareExchange(ref _voterChangeRequest, null, request);
+            }
+            return false;
+        }
+
+        return learnerReady && HasRecentVoterQuorum(view, members, selfId, now);
+    }
+
+    private bool HasRecentVoterQuorum(RaftVoterView view, IReadOnlyCollection<IMember> members, string selfId, DateTimeOffset now)
+    {
+        var replyingVoters = members.Where(member => view.Contains(member.Node.Id)
+                && HadRecentAppend(member.Node.Id, member.Node.Address, now))
+            .Select(member => member.Node.Id).ToHashSet(StringComparer.Ordinal);
+        replyingVoters.Add(selfId);
+        return view.HasQuorum(replyingVoters);
+    }
+
+    private bool HadRecentAppend(string id, IAddress address, DateTimeOffset now)
+        => ReplicationStateByNode.TryGetValue(id, out var follower)
+            && follower.LastSuccessfulAddress?.Equals(address) == true
+            && follower.LastSuccessfulAppend is { } last
+            && now - last >= TimeSpan.Zero && now - last <= _options.LeaderTimeout;
+
+    private async Task<bool> AppendVoterChange(RaftVoterState state, RaftVoterChange change, CancellationToken token, VoterChangeRequest? request = null)
     {
         await _commandRegistration.WaitAsync(token);
         try
         {
             token.ThrowIfCancellationRequested();
+            if (request != null && ((request.Replacement is { } replacement
+                    && !CheckAutomaticReplacement(state.Current, _clusterMembership.SelfMember.Node.Id, request, replacement))
+                || !request.StartLogging()))
+            {
+                return false;
+            }
             var index = _logRepository.LastIndex.Index + 1;
             await _logRepository.Append(new[] { new LogEntry(index, Term, Array.Empty<byte>()) { VoterChange = change } });
             state.Append(index, change);
+            return true;
         }
         finally
         {
@@ -354,8 +479,11 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
     protected override async Task OnStopping()
     {
-        Interlocked.Exchange(ref _voterChangeRequest, null)?.Completion.TrySetException(
-            new RaftClusterException("Leadership changed before the voter change was confirmed."));
+        var request = Interlocked.Exchange(ref _voterChangeRequest, null);
+        if (request != null && request.Replacement == null)
+        {
+            request.Completion.TrySetException(new RaftClusterException("Leadership changed before the voter change was confirmed."));
+        }
         await base.OnStopping();
     }
 
@@ -387,7 +515,8 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         {
             _logger.LogDebug("{Node}: Sending {MessageName} with PrevLogIndex = {PrevLogIndex}, PrevLogTerm = {PrevLogTerm}, LogCount = {LogCount}", followerNode, nameof(AppendEntriesRequest), req.PrevLogIndex, req.PrevLogTerm, req.Entries?.Count ?? 0);
             // Note: setting the request timeout to match the leader timeout - now point in waiting longer
-            var resp = await _messageSender.SendRequest(req, followerNode.Address, timeout: _options.LeaderPingInterval);
+            var address = followerNode.Address;
+            var resp = await _messageSender.SendRequest(req, address, timeout: _options.LeaderPingInterval);
 
             // when the response arrives, update the timestamp of when the request was sent
             followerReplicationState.LastAppendRequest = _time.Now;
@@ -408,6 +537,8 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
 
             if (resp.Success)
             {
+                followerReplicationState.LastSuccessfulAppend = _time.Now;
+                followerReplicationState.LastSuccessfulAddress = address;
                 var count = req.Entries?.Count ?? 0;
                 followerReplicationState.NextIndex += count;
                 var newMatchIndex = prevLogIndex + count;

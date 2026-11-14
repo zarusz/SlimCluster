@@ -206,13 +206,119 @@ public class RaftPartitionTests
         }
     }
 
+    [Fact]
+    public async Task Given_AutomaticReplacement_When_VoterReturnsOrQuorumIsLost_Then_OnlySustainedLossWithQuorumIsReplaced()
+    {
+        var directory = Directory.CreateTempSubdirectory();
+        try
+        {
+            var members = Enumerable.Range(1, 4)
+                .Select(i => (IMember)new Member(new Node($"node-{i}", $"192.168.1.{i}", 6200), DateTimeOffset.UnixEpoch))
+                .ToArray();
+            var initial = members.Take(3).Select(member => member.Node.Id).ToArray();
+            var target = new[] { "node-1", "node-3", "node-4" };
+            var delay = TimeSpan.FromMilliseconds(350);
+            var options = Options.Create(new RaftConsensusOptions
+            {
+                VoterIds = initial,
+                EnableVoterReconfiguration = true,
+                AutomaticVoterReplacementDelay = delay,
+                LeaderPingInterval = TimeSpan.FromMilliseconds(100)
+            });
+            var network = new TestNetwork(members, options, directory.FullName);
+            var leader = network.Peers[0];
+            var lost = network.Peers[1];
+            var survivor = network.Peers[2];
+            var learner = network.Peers[3];
+            network.Heal();
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            try
+            {
+                foreach (var peer in network.Peers)
+                {
+                    await peer.Node.OnStartingProxy();
+                }
+                await network.Step();
+                leader.Now += options.Value.LeaderTimeout + TimeSpan.FromSeconds(1);
+                await network.StepUntil(() => leader.Log.CommitedIndex == 1, deadline.Token);
+
+                network.Isolate(lost);
+                await Observe(TimeSpan.FromMilliseconds(150));
+                network.Heal();
+                await Observe(delay);
+                leader.Log.LastIndex.Index.Should().Be(1);
+                network.LearnerProbes.Should().BeEmpty();
+
+                network.Isolate(lost);
+                network.Isolate(survivor);
+                await Observe(delay + TimeSpan.FromMilliseconds(200));
+                leader.Log.LastIndex.Index.Should().Be(1);
+                network.LearnerProbes.Should().BeEmpty();
+
+                network.Heal();
+                network.Isolate(lost);
+                var learnerAppend = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                network.AllowAppend = (receiver, _) =>
+                {
+                    if (receiver != learner)
+                    {
+                        return true;
+                    }
+                    learnerAppend.TrySetResult();
+                    return false;
+                };
+                await network.StepUntil(() => learnerAppend.Task.IsCompleted, deadline.Token, TimeSpan.FromMilliseconds(5));
+                network.LearnerProbes.Should().Contain(learner.Member.Node.Id);
+                leader.Log.LastIndex.Index.Should().Be(1);
+
+                network.Heal();
+                await Observe(delay);
+                network.AllowAppend = null;
+                await Observe(delay);
+                leader.Log.LastIndex.Index.Should().Be(1);
+
+                network.Isolate(lost);
+                network.AllowAppend = (receiver, request) => receiver != survivor
+                    || request.Entries?.Any(entry => entry.VoterChange is { IsJoint: true }) != true;
+                await network.StepUntil(() => learner.Log.LastIndex.Index == 2, deadline.Token, TimeSpan.FromMilliseconds(5));
+                leader.Log.CommitedIndex.Should().Be(1);
+                network.AllowAppend = null;
+                await network.StepUntil(() => leader.Log.CommitedIndex == 3, deadline.Token, TimeSpan.FromMilliseconds(5));
+                var entries = await leader.Log.GetLogsAtIndex(2, 2);
+                entries[0].VoterChange!.IsJoint.Should().BeTrue();
+                entries[0].VoterChange!.OldVoterIds.Should().Equal(initial);
+                entries[1].VoterChange!.IsJoint.Should().BeFalse();
+                entries[1].VoterChange!.NewVoterIds.Should().Equal(target);
+                learner.Log.LastIndex.Index.Should().Be(3);
+            }
+            finally
+            {
+                foreach (var peer in network.Peers)
+                {
+                    await peer.Node.OnNewerTermDiscovered(peer.Node.CurrentTerm + 1, members[0].Node);
+                }
+            }
+
+            Task Observe(TimeSpan duration)
+            {
+                var until = leader.Now + duration;
+                return network.StepUntil(() => leader.Now >= until, deadline.Token, TimeSpan.FromMilliseconds(5));
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     private sealed class TestNetwork
     {
         private readonly IMember[] _voters;
-        private readonly ConcurrentDictionary<Guid, TaskCompletionSource<AppendEntriesResponse>> _requests = new();
+        private readonly ConcurrentDictionary<Guid, TaskCompletionSource<RaftResponse>> _requests = new();
 
         public Peer[] Peers { get; }
         public Func<Peer, AppendEntriesRequest, bool>? AllowAppend { get; set; }
+        public ConcurrentQueue<string> LearnerProbes { get; } = new();
 
         public TestNetwork(IMember[] voters, IOptions<RaftConsensusOptions> options, string? directory = null)
         {
@@ -243,7 +349,7 @@ public class RaftPartitionTests
             }
         }
 
-        public async Task StepUntil(Func<bool> condition, CancellationToken token)
+        public async Task StepUntil(Func<bool> condition, CancellationToken token, TimeSpan? step = null)
         {
             while (!condition())
             {
@@ -251,7 +357,7 @@ public class RaftPartitionTests
                 await Step();
                 foreach (var peer in Peers)
                 {
-                    peer.Now += TimeSpan.FromMilliseconds(1);
+                    peer.Now += step ?? TimeSpan.FromMilliseconds(1);
                 }
                 await Task.Delay(1, token);
             }
@@ -283,7 +389,7 @@ public class RaftPartitionTests
                 return Task.CompletedTask;
             }
 
-            if (message is AppendEntriesResponse response && _requests.TryGetValue(response.RequestId, out var pending))
+            if (message is RaftResponse response && _requests.TryGetValue(response.RequestId, out var pending))
             {
                 pending.TrySetResult(response);
                 return Task.CompletedTask;
@@ -292,15 +398,20 @@ public class RaftPartitionTests
             return receiver.Node.OnMessageArrived(message, sender.Member.Node.Address);
         }
 
-        public async Task<AppendEntriesResponse> Append(Peer sender, AppendEntriesRequest request, IAddress address, TimeSpan? timeout)
+        public async Task<TResponse> Request<TResponse>(Peer sender, RaftMessage request, IAddress address, TimeSpan? timeout)
+            where TResponse : RaftResponse
         {
-            var pending = new TaskCompletionSource<AppendEntriesResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (request is LearnerProbeRequest)
+            {
+                LearnerProbes.Enqueue(Peers.Single(peer => peer.Member.Node.Address.Equals(address)).Member.Node.Id);
+            }
+            var pending = new TaskCompletionSource<RaftResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
             _requests.TryAdd(request.RequestId, pending);
             try
             {
                 await Send(sender, request, address);
                 using var deadline = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(1));
-                return await pending.Task.WaitAsync(deadline.Token);
+                return (TResponse)await pending.Task.WaitAsync(deadline.Token);
             }
             finally
             {
@@ -338,7 +449,10 @@ public class RaftPartitionTests
                 .Returns((object message, IAddress address) => network.Send(this, message, address));
             sender.Setup(x => x.SendRequest(It.IsAny<AppendEntriesRequest>(), It.IsAny<IAddress>(), It.IsAny<TimeSpan?>()))
                 .Returns((IRequest<AppendEntriesResponse> request, IAddress address, TimeSpan? timeout) =>
-                    network.Append(this, (AppendEntriesRequest)request, address, timeout));
+                    network.Request<AppendEntriesResponse>(this, (RaftMessage)request, address, timeout));
+            sender.Setup(x => x.SendRequest(It.IsAny<LearnerProbeRequest>(), It.IsAny<IAddress>(), It.IsAny<TimeSpan?>()))
+                .Returns((IRequest<LearnerProbeResponse> request, IAddress address, TimeSpan? timeout) =>
+                    network.Request<LearnerProbeResponse>(this, (RaftMessage)request, address, timeout));
             Node = new RaftNodeProxy(NullLoggerFactory.Instance, services.Object, membership.Object,
                 clock.Object, Log, sender.Object, machine.Object, options);
             if (directory != null)

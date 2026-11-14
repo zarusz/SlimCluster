@@ -418,6 +418,7 @@ cfg.AddRaftConsensus(opts =>
 - `VoterIds` sets the initial voter list explicitly. Use the same stable IDs on every node. Each initial voter's `ClusterConfiguration.NodeId` must appear in the list. Leave the list empty to use one-time discovery bootstrap.
 - `NodeCount` is required for discovery bootstrap. With explicit `VoterIds`, omit it or set it to the length of the list.
 - `EnableVoterReconfiguration` enables log-backed changes to the voter set. Set `JoinAsLearner` on a new node outside the initial voter set.
+- `AutomaticVoterReplacementDelay` enables automatic replacement after the configured observation period. It defaults to disabled.
 - `RequestTimeout` bounds how long a client waits for a command result. A `TimeoutException` means the outcome is unknown. The command may still commit later.
 - `LeaderTimeout` — time a follower waits without hearing from a leader before starting an election.
 - `LeaderPingInterval` — how often the leader sends heartbeats to followers.
@@ -471,7 +472,24 @@ await voterReconfiguration.ChangeVoters(new[] { "node-2", "node-3", "node-4" }, 
 
 Raft catches up new voters before writing a joint configuration entry. During the joint phase, elections and commits require a majority of each voter set. The final entry establishes the new voter set. If leadership changes after the joint entry commits, the next leader can finish the transition. A timeout or cancellation after logging starts leaves the outcome unknown.
 
-SWIM discovers peers and tracks reachability. Joins, suspicion, and departures alone leave the voter set intact. Issue one change at a time and keep enough voters available in both sets during the transition. If the cluster has lost its existing quorum, adding more SWIM members cannot restore it.
+SWIM discovers peers and tracks reachability. Raft changes the voter set through its log. Issue one change at a time and keep enough voters available in both sets during the transition. If the cluster has lost its existing quorum, adding more SWIM members cannot restore it.
+
+#### Automatically replacing absent voters
+
+To let the leader propose replacements, enable voter reconfiguration and set `AutomaticVoterReplacementDelay` on each node that may become leader.
+
+```cs
+opts.EnableVoterReconfiguration = true;
+opts.AutomaticVoterReplacementDelay = TimeSpan.FromMinutes(2);
+// Optional admission filter for environments with a dedicated pool of standby learners.
+opts.AutomaticVoterReplacementCandidate = member => member.Node.Id.StartsWith("standby-", StringComparison.Ordinal);
+```
+
+Start replacement nodes with unique IDs and `JoinAsLearner = true`. The leader waits until SWIM has continuously shown one voter absent and a standby learner present for the configured period. SWIM suspicion alone leaves the voter present. A new leader starts its own observation period.
+
+The leader verifies the candidate is running as a standby learner and has recent Raft acknowledgments from a majority of the current voters before attempting a replacement. It catches up the learner, then checks the continued absence, learner reachability, and current quorum before appending the joint entry. A voter that returns before that point cancels the automatic attempt. Once the joint entry is appended, Raft continues the normal transition with both quorum checks.
+
+Automatic replacement preserves the voter count and replaces one voter at a time. A previously admitted voter cannot serve as an automatic standby. Choose a delay longer than the interruptions you expect SWIM to recover from. Configure the optional admission filter when only some standbys should qualify.
 
 #### Upgrading an existing Raft cluster
 

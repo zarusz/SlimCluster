@@ -109,6 +109,11 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         {
             throw new ArgumentException("Joining as a learner requires voter reconfiguration.", nameof(options));
         }
+        if (_options.AutomaticVoterReplacementDelay is { } replacementDelay
+            && (!_options.EnableVoterReconfiguration || replacementDelay <= TimeSpan.Zero))
+        {
+            throw new ArgumentException("Automatic voter replacement requires reconfiguration and a positive delay.", nameof(options));
+        }
         _bootstrapFromMembership = _options.VoterIds is { Length: 0 } && _expectedVoterCount > 0;
         if (!_bootstrapFromMembership)
         {
@@ -697,6 +702,8 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
                     RequestVoteResponse r when IsVoter(node.Id) => OnRequestVoteResponse(r, node),
                     AppendEntriesRequest r when r.LeaderId == node.Id && (_voterState != null || IsVoter(node.Id)) => OnAppendEntriesRequest(r, node),
                     InstallSnapshotRequest r when _voterState == null && r.LeaderId == node.Id && IsVoter(node.Id) => OnInstallSnapshotRequest(r, node),
+                    LearnerProbeRequest r when _voterState != null => _messageSender.SendMessage(
+                        new LearnerProbeResponse(r) { IsStandbyLearner = _options.JoinAsLearner && !_voterState.HasEverVoted(selfId) }, node.Address),
                     _ => null
                 };
                 if (task != null)

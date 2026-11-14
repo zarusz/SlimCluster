@@ -1,5 +1,6 @@
 ﻿namespace SlimCluster.Consensus.Raft;
 
+using SlimCluster.Membership;
 using SlimCluster.Serialization;
 
 public class RaftConsensusOptions
@@ -39,6 +40,15 @@ public class RaftConsensusOptions
 
     /// <summary>Starts a node outside the initial voter set so a leader can catch it up before promotion.</summary>
     public bool JoinAsLearner { get; set; }
+
+    /// <summary>
+    /// How long a leader must observe a voter absent and a standby learner present before
+    /// proposing automatic replacement. Null disables automatic replacement.
+    /// </summary>
+    public TimeSpan? AutomaticVoterReplacementDelay { get; set; }
+
+    /// <summary>Optional additional admission filter for automatically promoted learners.</summary>
+    public Func<IMember, bool>? AutomaticVoterReplacementCandidate { get; set; }
 
     /// <summary>
     /// The service type that should be resolved from MSDI for Log Entry serialization.

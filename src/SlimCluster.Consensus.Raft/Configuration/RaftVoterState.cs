@@ -6,13 +6,17 @@ internal sealed class RaftVoterState
 {
     private readonly RaftVoterView _initial;
     private volatile RaftVoterView _current;
+    private volatile HashSet<string> _voterHistory;
 
     public RaftVoterView Current => _current;
 
     public RaftVoterState(string[] initialIds)
     {
         _initial = _current = new RaftVoterView(initialIds, initialIds, false, 0);
+        _voterHistory = initialIds.ToHashSet(StringComparer.Ordinal);
     }
+
+    public bool HasEverVoted(string id) => _voterHistory.Contains(id);
 
     public async Task ReadLog(ILogRepository log)
     {
@@ -23,20 +27,33 @@ internal sealed class RaftVoterState
 
         var last = log.LastIndex.Index;
         var view = _initial;
+        var history = _initial.NewIds.ToHashSet(StringComparer.Ordinal);
         if (last > 0)
         {
             var entries = await log.GetLogsAtIndex(1, last);
-            var configurationEntry = entries.LastOrDefault(entry => entry.VoterChange != null);
-            if (configurationEntry?.VoterChange is { } config)
+            LogEntry? latest = null;
+            foreach (var entry in entries)
             {
-                view = new RaftVoterView(config.OldVoterIds, config.NewVoterIds, config.IsJoint, configurationEntry.Index);
+                if (entry.VoterChange is { } config)
+                {
+                    history.UnionWith(config.NewVoterIds);
+                    latest = entry;
+                }
+            }
+            if (latest?.VoterChange is { } change)
+            {
+                view = new RaftVoterView(change.OldVoterIds, change.NewVoterIds, change.IsJoint, latest.Index);
             }
         }
+        _voterHistory = history;
         _current = view;
     }
 
     public void Append(int index, RaftVoterChange change)
-        => _current = new RaftVoterView(change.OldVoterIds, change.NewVoterIds, change.IsJoint, index);
+    {
+        _voterHistory = _voterHistory.Concat(change.NewVoterIds).ToHashSet(StringComparer.Ordinal);
+        _current = new RaftVoterView(change.OldVoterIds, change.NewVoterIds, change.IsJoint, index);
+    }
 }
 
 internal sealed class RaftVoterView

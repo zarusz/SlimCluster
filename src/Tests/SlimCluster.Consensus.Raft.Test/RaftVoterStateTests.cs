@@ -27,12 +27,14 @@ public class RaftVoterStateTests
             voters.Current.HasQuorum(new HashSet<string> { "a", "b" }).Should().BeFalse();
             voters.Current.HasQuorum(new HashSet<string> { "b", "d" }).Should().BeFalse();
             voters.Current.HasQuorum(new HashSet<string> { "b", "c" }).Should().BeTrue();
+            voters.HasEverVoted("d").Should().BeTrue();
 
             await log.Append(new[] { new LogEntry(1, 2, Array.Empty<byte>()) });
             await voters.ReadLog(new FileRaftLogRepository(path));
             voters.Current.IsJoint.Should().BeFalse();
             voters.Current.NewIds.Should().Equal(initial);
             voters.Current.HasQuorum(new HashSet<string> { "a", "b" }).Should().BeTrue();
+            voters.HasEverVoted("d").Should().BeFalse();
         }
         finally
         {

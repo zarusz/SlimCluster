@@ -9,6 +9,7 @@ Unreleased changes appear first, followed by releases in reverse chronological o
 - Elections and write commits require a majority of the configured voters, even when SWIM loses contact with peers. Nodes retain their vote for the full term.
 - New clusters can discover their initial voters through SWIM by configuring `NodeCount` with a shared bootstrap store and durable per-node state. Elections wait until all initial voters persist the published roster.
 - Clusters with reconfiguration enabled can add, remove, or replace voters through the leader. New nodes start as learners, and Raft requires both voter majorities during the transition. See the [configuration and storage requirements](docs/intro.md#changing-raft-voters).
+- An opt-in [automatic replacement policy](docs/intro.md#automatically-replacing-absent-voters) lets the leader replace a persistently absent voter with a standby learner after a configurable delay. A returning voter cancels the attempt before the joint configuration is logged.
 - Followers apply only entries verified by the leader's current append request, preventing a heartbeat or partial append from committing a divergent log suffix.
 - Client writes throw `TimeoutException` when the result cannot be confirmed before the deadline. A timed-out command may still commit later.
 
