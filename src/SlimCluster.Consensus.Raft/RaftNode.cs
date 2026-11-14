@@ -56,6 +56,8 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
     private RaftLeaderState? _leaderState;
     private RaftCandidateState? _candidateState;
+    private (Guid RequestId, RaftCandidateState Candidate)? _preVote;
+    private int _preVoteTermHint;
     private RaftFollowerState? _followerState;
     private MemoryStream? _installingSnapshot;
     private Guid? _installingSnapshotId;
@@ -282,18 +284,44 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         GC.SuppressFinalize(this);
     }
 
-    protected async Task StartElection()
+    private DateTimeOffset NextElectionDeadline()
+        => _time.Now + _options.ElectionTimeoutMin
+            + (_options.ElectionTimeoutMax - _options.ElectionTimeoutMin).Multiply(Random.Shared.NextDouble());
+
+    private async Task StartElectionAttempt()
     {
-        _logger.LogInformation("Starting election for term {Term}", _currentTerm + 1);
+        if (_voterState == null)
+        {
+            await StartElection();
+            return;
+        }
+        var selfId = _clusterMembership.SelfMember.Node.Id;
+        var term = Math.Max(_currentTerm, _preVoteTermHint) + 1;
+        var last = _logRepository.LastIndex;
+        var request = new PreVoteRequest { Term = term, CandidateId = selfId, LastLogIndex = last.Index, LastLogTerm = last.Term };
+        var candidate = new RaftCandidateState(term, NextElectionDeadline());
+        candidate.AddVote(selfId);
+        _preVote = (request.RequestId, candidate);
+
+        if (HasElectionQuorum(candidate.RecivedVotesFrom))
+        {
+            await StartElection(term);
+            return;
+        }
+
+        await SendElectionRequest(request);
+    }
+
+    protected Task StartElection() => StartElection(_currentTerm + 1);
+
+    private async Task StartElection(int term)
+    {
+        _logger.LogInformation("Starting election for term {Term}", term);
         Status = RaftNodeStatus.Candidate;
         await ClearPreviousState();
 
-        // advance term
-        UpdateTerm(_currentTerm + 1);
-
-        var randomFactor = new Random().NextDouble();
-        var randomInterval = _options.ElectionTimeoutMax.Subtract(_options.ElectionTimeoutMin).Multiply(randomFactor);
-        _candidateState = new RaftCandidateState(_currentTerm, _time.Now.Add(_options.ElectionTimeoutMin).Add(randomInterval));
+        UpdateTerm(term);
+        _candidateState = new RaftCandidateState(term, NextElectionDeadline());
 
         // vote for self
         _votedFor = _clusterMembership.SelfMember.Node.Id;
@@ -309,11 +337,13 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         // request votes from each other node
         var lastIndex = _logRepository.LastIndex;
         var r = new RequestVoteRequest { CandidateId = _clusterMembership.SelfMember.Node.Id, Term = _currentTerm, LastLogIndex = lastIndex.Index, LastLogTerm = lastIndex.Term };
-        var tasks = _clusterMembership.OtherMembers
-            .Where(member => IsVoter(member.Node.Id) && member.Node.Id != _votedFor)
-            .Select(member => _messageSender.SendMessage(r, member.Node.Address));
-        await Task.WhenAll(tasks);
+        await SendElectionRequest(r);
     }
+
+    private Task SendElectionRequest(RequestVoteRequest request)
+        => Task.WhenAll(_clusterMembership.OtherMembers
+            .Where(member => IsVoter(member.Node.Id) && member.Node.Id != request.CandidateId)
+            .Select(member => _messageSender.SendMessage(request, member.Node.Address)));
 
     protected async Task BecomeFollower(int term)
     {
@@ -339,6 +369,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         }
 
         _candidateState = null;
+        ResetPreVote();
 
         _followerState = null;
 
@@ -379,9 +410,62 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         await _leaderState.Start();
     }
 
+    private bool CandidateLogIsUpToDate(RequestVoteRequest request)
+    {
+        var last = _logRepository.LastIndex;
+        return request.LastLogTerm > last.Term
+            || (request.LastLogTerm == last.Term && request.LastLogIndex >= last.Index);
+    }
+
+    private void ResetPreVote()
+    {
+        _preVote = null;
+        _preVoteTermHint = 0;
+    }
+
+    private Task OnPreVoteRequest(PreVoteRequest request, INode node)
+        => _messageSender.SendMessage(new PreVoteResponse(request)
+        {
+            CurrentTerm = _currentTerm,
+            VoteGranted = request.Term > _currentTerm
+                && request.CandidateId == node.Id
+                && IsVoter(_clusterMembership.SelfMember.Node.Id)
+                && CandidateLogIsUpToDate(request)
+        }, node.Address);
+
+    private async Task OnPreVoteResponse(PreVoteResponse response, INode node)
+    {
+        if (_preVote is not { } pending || pending.RequestId != response.RequestId
+            || _time.Now > pending.Candidate.ElectionTimeout)
+        {
+            return;
+        }
+
+        // A peer's term can inform the next probe, but only a successful quorum advances the local term.
+        _preVoteTermHint = Math.Max(_preVoteTermHint, response.CurrentTerm);
+        if (!response.VoteGranted || response.CurrentTerm >= pending.Candidate.Term)
+        {
+            return;
+        }
+
+        pending.Candidate.AddVote(node.Id);
+        if (HasElectionQuorum(pending.Candidate.RecivedVotesFrom))
+        {
+            await StartElection(pending.Candidate.Term);
+        }
+    }
+
     protected async Task OnRequestVoteRequest(RequestVoteRequest r, INode node)
     {
         _logger.LogTrace("{Node}: VotedFor = {VotedFor}, CurrentTerm = {Term}, LogLastIndex = {LogLastIndex}", node, _votedFor, _currentTerm, _logRepository.LastIndex);
+
+        if (_voterState != null && r.Term > _currentTerm
+            && _followerState is { Leader: not null } follower && _time.Now <= follower.LeaderTimeout
+            && !CandidateLogIsUpToDate(r))
+        {
+            // A delayed ballot from a stale candidate must not interrupt a leader we still hear from.
+            return;
+        }
 
         // if higher term discoverd
         if (r.Term > _currentTerm)
@@ -403,10 +487,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             {
                 // Raft §5.4.1: candidate log is up-to-date if its last term is higher,
                 // or same term but index is at least as long as ours.
-                var ourLastIndex = _logRepository.LastIndex;
-                var logIsUpToDate = r.LastLogTerm > ourLastIndex.Term
-                    || (r.LastLogTerm == ourLastIndex.Term && r.LastLogIndex >= ourLastIndex.Index);
-                if (logIsUpToDate)
+                if (CandidateLogIsUpToDate(r))
                 {
                     // Grant vote - sender's log is at least as up to date as this node's.
                     resp.VoteGranted = true;
@@ -507,6 +588,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             // Become follower immediately
             await BecomeFollower(r.Term);
         }
+        ResetPreVote();
         _followerState?.OnLeaderMessage(node);
 
         if (r.PrevLogIndex < _logRepository.LastCompactedIndex.Index
@@ -699,6 +781,8 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
                 var task = arrivedMessage.Message switch
                 {
+                    PreVoteRequest r => _voterState != null && IsVoter(node.Id) ? OnPreVoteRequest(r, node) : null,
+                    PreVoteResponse r when _voterState != null && IsVoter(node.Id) => OnPreVoteResponse(r, node),
                     RequestVoteRequest r when IsVoter(node.Id) => OnRequestVoteRequest(r, node),
                     RequestVoteResponse r when IsVoter(node.Id) => OnRequestVoteResponse(r, node),
                     AppendEntriesRequest r when r.LeaderId == node.Id && (_voterState != null || IsVoter(node.Id)) => OnAppendEntriesRequest(r, node),
@@ -725,13 +809,18 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             idleRun = false;
         }
 
+        if (_preVote is { } pending && _time.Now <= pending.Candidate.ElectionTimeout)
+        {
+            return idleRun;
+        }
+
         if (Status == RaftNodeStatus.Candidate)
         {
             // When election timeout, start new election.
             if (_time.Now > _candidateState!.ElectionTimeout)
             {
                 _logger.LogInformation("Did not reach consensus on a leader for term {Term} within the alloted timeout {ElectionTimeout} - starting another election", _currentTerm, _options.ElectionTimeoutMin);
-                await StartElection();
+                await StartElectionAttempt();
                 idleRun = false;
             }
         }
@@ -743,7 +832,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             if (_time.Now > _followerState.LeaderTimeout)
             {
                 _logger.LogInformation("Did not hear from leader within the alloted timeout {LeaderTimeout} - starting an election", _options.LeaderTimeout);
-                await StartElection();
+                await StartElectionAttempt();
                 idleRun = false;
             }
         }

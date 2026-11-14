@@ -474,6 +474,8 @@ Raft catches up new voters before writing a joint configuration entry. During th
 
 SWIM discovers peers and tracks reachability. Raft changes the voter set through its log. Issue one change at a time and keep enough voters available in both sets during the transition. If the cluster has lost its existing quorum, adding more SWIM members cannot restore it.
 
+When reconfiguration is enabled, candidates first run a pre-vote without changing the term. This prevents a former voter that missed its removal from starting an election with a stale log or configuration. If you want to bring a retired node back into Raft, give it a fresh node ID and fresh local Raft storage, then start it as a learner. Manual and automatic replacement both require a fresh ID for readmission.
+
 #### Automatically replacing absent voters
 
 Enabling voter reconfiguration also enables automatic replacement with a two-minute observation period. To customize the delay or keep replacements manual, configure `AutomaticVoterReplacementDelay` on each node that may become leader.

@@ -312,6 +312,109 @@ public class RaftPartitionTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Given_FormerVoterReturns_Then_CannotDisruptLeaderOrBeReadmitted(bool survivorMissedFinal)
+    {
+        var directory = Directory.CreateTempSubdirectory();
+        try
+        {
+            var members = Enumerable.Range(1, 4)
+                .Select(i => (IMember)new Member(new Node($"node-{i}", $"192.168.1.{i}", 6200), DateTimeOffset.UnixEpoch))
+                .ToArray();
+            var initial = members.Take(3).Select(member => member.Node.Id).ToArray();
+            var options = Options.Create(new RaftConsensusOptions
+            {
+                VoterIds = initial,
+                EnableVoterReconfiguration = true,
+                AutomaticVoterReplacementDelay = null,
+                LeaderPingInterval = TimeSpan.FromMilliseconds(100)
+            });
+            var network = new TestNetwork(members, options, directory.FullName);
+            var leader = network.Peers[0];
+            var former = network.Peers[1];
+            var survivor = network.Peers[2];
+            network.Heal();
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            try
+            {
+                foreach (var peer in network.Peers)
+                {
+                    await peer.Node.OnStartingProxy();
+                }
+                await network.Step();
+                leader.Now += options.Value.LeaderTimeout + TimeSpan.FromSeconds(1);
+                await network.StepUntil(() => leader.Log.CommitedIndex == 1 && former.Log.LastIndex.Index == 1, deadline.Token);
+                network.Isolate(former);
+
+                if (survivorMissedFinal)
+                {
+                    network.AllowAppend = (receiver, request) => receiver != survivor
+                        || request.Entries?.Any(entry => entry.VoterChange is { IsJoint: false }) != true;
+                }
+                var replacement = leader.Node.ChangeVoters(new[] { "node-1", "node-3", "node-4" }, deadline.Token);
+                await network.StepUntil(() => replacement.IsCompleted, deadline.Token);
+                await replacement;
+                await network.StepUntil(() => survivor.Log.LastIndex.Index == (survivorMissedFinal ? 2 : 3), deadline.Token);
+
+                var leaderTerm = leader.Node.CurrentTerm;
+                var formerTerm = former.Node.CurrentTerm;
+                if (!survivorMissedFinal)
+                {
+                    former = new Peer(former.Member, Array.Empty<IMember>(), options, network, directory.FullName);
+                    network.Peers[1] = former;
+                    await former.Node.OnStartingProxy();
+                    former.Node.CurrentTerm.Should().Be(formerTerm);
+                }
+                network.Heal();
+                former.Now += options.Value.LeaderTimeout + TimeSpan.FromSeconds(1);
+                await network.StepUntil(() => network.ElectionMessages.Any(message =>
+                    message.Sender == former && message.Receiver == survivor
+                    && message.Message is PreVoteRequest request && request.Term > leaderTerm), deadline.Token);
+                if (survivorMissedFinal)
+                {
+                    await network.StepUntil(() => network.ElectionMessages.Any(message =>
+                        message.Sender == survivor && message.Receiver == former
+                        && message.Message is PreVoteResponse { VoteGranted: false }), deadline.Token);
+
+                    // A ballot already in flight from behind the joint entry cannot relay a higher term either.
+                    var staleBallot = new RequestVoteRequest { Term = leaderTerm + 1, CandidateId = former.Member.Node.Id };
+                    await survivor.Node.OnMessageArrived(staleBallot, former.Member.Node.Address);
+                    await network.Step();
+                    survivor.Node.CurrentTerm.Should().Be(leaderTerm);
+                }
+                former.Now += options.Value.ElectionTimeoutMax + TimeSpan.FromSeconds(1);
+                await network.StepUntil(() => network.ElectionMessages.Count(message =>
+                    message.Sender == former && message.Receiver == survivor && message.Message is PreVoteRequest) >= 2, deadline.Token);
+                former.Node.CurrentTerm.Should().Be(formerTerm);
+                network.ElectionMessages.Any(message => message.Sender == former
+                    && message.Message is RequestVoteRequest and not PreVoteRequest).Should().BeFalse();
+
+                var error = await Assert.ThrowsAsync<ArgumentException>(() => leader.Node.ChangeVoters(initial, deadline.Token));
+                error.Message.Should().Contain("fresh learner ID");
+
+                network.AllowAppend = null;
+                var write = leader.Node.OnClientRequest("increment", deadline.Token);
+                await network.StepUntil(() => write.IsCompleted && survivor.Log.LastIndex.Index >= 3, deadline.Token);
+                (await write).Should().Be("increment");
+                leader.Node.CurrentTerm.Should().Be(leaderTerm);
+                leader.Node.Status.Should().Be(RaftNodeStatus.Leader);
+            }
+            finally
+            {
+                foreach (var peer in network.Peers)
+                {
+                    await peer.Node.OnNewerTermDiscovered(peer.Node.CurrentTerm + 1, members[0].Node);
+                }
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     private sealed class TestNetwork
     {
         private readonly IMember[] _voters;
@@ -320,6 +423,7 @@ public class RaftPartitionTests
         public Peer[] Peers { get; }
         public Func<Peer, AppendEntriesRequest, bool>? AllowAppend { get; set; }
         public ConcurrentQueue<string> LearnerProbes { get; } = new();
+        public ConcurrentQueue<(Peer Sender, Peer Receiver, object Message)> ElectionMessages { get; } = new();
 
         public TestNetwork(IMember[] voters, IOptions<RaftConsensusOptions> options, string? directory = null)
         {
@@ -388,6 +492,11 @@ public class RaftPartitionTests
                 || (message is AppendEntriesRequest append && AllowAppend?.Invoke(receiver, append) == false))
             {
                 return Task.CompletedTask;
+            }
+
+            if (message is RequestVoteRequest or PreVoteResponse)
+            {
+                ElectionMessages.Enqueue((sender, receiver, message));
             }
 
             if (message is RaftResponse response && _requests.TryGetValue(response.RequestId, out var pending))

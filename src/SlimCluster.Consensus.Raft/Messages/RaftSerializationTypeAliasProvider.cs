@@ -12,6 +12,8 @@ internal class RaftSerializationTypeAliasProvider : ISerializationTypeAliasProvi
         ["raft-isr"] = typeof(InstallSnapshotResponse),
         ["raft-rv"] = typeof(RequestVoteRequest),
         ["raft-rvr"] = typeof(RequestVoteResponse),
+        ["raft-pv"] = typeof(PreVoteRequest),
+        ["raft-pvr"] = typeof(PreVoteResponse),
         ["raft-lp"] = typeof(LearnerProbeRequest),
         ["raft-lpr"] = typeof(LearnerProbeResponse),
     };

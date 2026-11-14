@@ -277,7 +277,8 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
     {
         token.ThrowIfCancellationRequested();
         var target = RaftVoterConfiguration.ValidateVoterIds(voterIds);
-        var view = _voterState?.Current ?? throw new InvalidOperationException("Raft voter reconfiguration is disabled.");
+        var voterState = _voterState ?? throw new InvalidOperationException("Raft voter reconfiguration is disabled.");
+        var view = voterState.Current;
         if (_higherTermObserved || _retired || view.IsJoint || view.Index > _logRepository.CommitedIndex)
         {
             throw new InvalidOperationException("Raft is already changing voters or leadership has changed.");
@@ -285,6 +286,12 @@ public class RaftLeaderState : TaskLoop, IRaftClientRequestHandler, IDurableComp
         if (target.SequenceEqual(view.NewIds, StringComparer.Ordinal))
         {
             return;
+        }
+
+        var retired = target.FirstOrDefault(id => !view.Contains(id) && voterState.HasEverVoted(id));
+        if (retired != null)
+        {
+            throw new ArgumentException($"Raft voter '{retired}' has been retired. Use a fresh learner ID for readmission.", nameof(voterIds));
         }
 
         var visibleIds = _clusterMembership.OtherMembers.Select(member => member.Node.Id).ToHashSet(StringComparer.Ordinal);
