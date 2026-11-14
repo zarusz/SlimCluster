@@ -20,7 +20,14 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
     private readonly IClusterMembership _clusterMembership;
     private readonly IMessageSender _messageSender;
     private readonly RaftConsensusOptions _options;
-    private readonly RaftVoterConfiguration _voters;
+    private readonly bool _bootstrapFromMembership;
+    private readonly int _expectedVoterCount;
+    private RaftVoterConfiguration? _voters;
+    private RaftVoterConfiguration Voters => _voters ?? throw new InvalidOperationException("Raft bootstrap has not completed.");
+    private IRaftBootstrapStore? _bootstrapStore;
+    private bool _voterReadyReported;
+    private bool _allVotersReady;
+    private volatile bool _bootstrapComplete;
     private readonly ISerializer _logSerializer;
     private readonly ITime _time;
     private readonly IStateMachine _stateMachine;
@@ -94,7 +101,13 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         _messageSender = messageSender;
         _stateMachine = stateMachine;
         _options = options.Value;
-        _voters = new RaftVoterConfiguration(_options, _clusterMembership.SelfMember.Node.Id);
+        _expectedVoterCount = _options.NodeCount;
+        _bootstrapFromMembership = _options.VoterIds is { Length: 0 } && _expectedVoterCount > 0;
+        if (!_bootstrapFromMembership)
+        {
+            _voters = new RaftVoterConfiguration(_options, _clusterMembership.SelfMember.Node.Id);
+            _bootstrapComplete = true;
+        }
 
         _logSerializer = (ISerializer)_serviceProvider.GetRequiredService(_options.LogSerializerType);
 
@@ -105,6 +118,71 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         _candidateState = null;
         _followerState = null;
         Status = RaftNodeStatus.Unknown;
+    }
+
+    protected override async Task OnStarting()
+    {
+        await base.OnStarting();
+        if (_bootstrapFromMembership)
+        {
+            if (string.IsNullOrWhiteSpace(_clusterMembership.ClusterId))
+            {
+                throw new InvalidOperationException("Raft bootstrap requires a cluster ID.");
+            }
+
+            _bootstrapStore = _serviceProvider.GetRequiredService<IRaftBootstrapStore>();
+            await _serviceProvider.GetRequiredService<IClusterPersistenceService>().Restore(CancellationToken.None);
+            if (_voters == null && (_currentTerm != 0 || _logRepository.LastIndex.Index != 0))
+            {
+                throw new InvalidOperationException("Use explicit voter IDs when upgrading an existing Raft cluster.");
+            }
+        }
+    }
+
+    private async Task TryBootstrapVoters(CancellationToken token)
+    {
+        var store = _bootstrapStore ?? throw new InvalidOperationException("Raft bootstrap store was not initialized.");
+        var clusterId = _clusterMembership.ClusterId;
+        var selfId = _clusterMembership.SelfMember.Node.Id;
+        var discoveredIds = _clusterMembership.OtherMembers
+            .Select(member => member.Node.Id)
+            .Append(selfId)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var proposal = _voters == null && discoveredIds.Length == _expectedVoterCount
+            ? new RaftVoterConfiguration(discoveredIds, _expectedVoterCount, selfId).GetIds()
+            : null;
+        var publishedIds = await store.GetOrPublishVoters(clusterId, proposal, token);
+        if (publishedIds == null || !publishedIds.Contains(selfId, StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        var published = new RaftVoterConfiguration(publishedIds, _expectedVoterCount, selfId);
+        if (_voters == null && await store.AreVotersReady(clusterId, new[] { selfId }, token))
+        {
+            throw new InvalidOperationException("This Raft voter has already bootstrapped. Restore its local persisted state.");
+        }
+        if (_voters != null && !_voters.GetIds().SequenceEqual(published.GetIds(), StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException("The published Raft voters differ from the locally persisted voter list.");
+        }
+
+        _voters = published;
+        if (!_voterReadyReported)
+        {
+            await PersistPersistentState();
+            await store.MarkVoterReady(clusterId, selfId, token);
+            _voterReadyReported = true;
+        }
+
+        if (await store.AreVotersReady(clusterId, published.GetIds(), token))
+        {
+            _allVotersReady = true;
+            await PersistPersistentState();
+            _bootstrapComplete = true;
+        }
     }
 
     protected override async Task OnStopping()
@@ -140,7 +218,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         _candidateState.AddVote(_votedFor);
         await PersistPersistentState();
 
-        if (_voters.Majority == 1)
+        if (Voters.Majority == 1)
         {
             await BecomeLeader();
             return;
@@ -150,7 +228,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         var lastIndex = _logRepository.LastIndex;
         var r = new RequestVoteRequest { CandidateId = _clusterMembership.SelfMember.Node.Id, Term = _currentTerm, LastLogIndex = lastIndex.Index, LastLogTerm = lastIndex.Term };
         var tasks = _clusterMembership.OtherMembers
-            .Where(member => _voters.Contains(member.Node.Id) && member.Node.Id != _votedFor)
+            .Where(member => Voters.Contains(member.Node.Id) && member.Node.Id != _votedFor)
             .Select(member => _messageSender.SendMessage(r, member.Node.Address));
         await Task.WhenAll(tasks);
     }
@@ -213,7 +291,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             _logSerializer,
             _time,
             ObserveHigherTerm,
-            _voters);
+            Voters);
 
         await _leaderState.Start();
     }
@@ -284,7 +362,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             {
                 _candidateState!.AddVote(node.Id);
 
-                if (_candidateState.RecivedVotesFrom.Count >= _voters.Majority)
+                if (_candidateState.RecivedVotesFrom.Count >= Voters.Majority)
                 {
                     _logger.LogInformation("Received {VoteCount} votes in term {Term}", _candidateState.RecivedVotesFrom.Count, _currentTerm);
                     await BecomeLeader();
@@ -477,11 +555,21 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
     private Task PersistPersistentState()
     {
         var persistenceService = _serviceProvider.GetService<IClusterPersistenceService>();
+        if (_bootstrapFromMembership && persistenceService == null)
+        {
+            throw new InvalidOperationException("Raft bootstrap requires local persistence.");
+        }
         return persistenceService?.Persist(CancellationToken.None) ?? Task.CompletedTask;
     }
 
     protected override async Task<bool> OnLoopRun(CancellationToken token)
     {
+        if (!_bootstrapComplete)
+        {
+            await TryBootstrapVoters(token);
+            return true;
+        }
+
         var idleRun = true;
 
         while (_higherTerms.TryDequeue(out var observed))
@@ -496,7 +584,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
             var address = arrivedMessage.Address;
             var node = _clusterMembership.OtherMembers.FirstOrDefault(x => x.Node.Address.Equals(address))?.Node;
-            if (node != null && _voters.Contains(node.Id) && node.Id != _clusterMembership.SelfMember.Node.Id)
+            if (node != null && Voters.Contains(node.Id) && node.Id != _clusterMembership.SelfMember.Node.Id)
             {
                 _logger.LogDebug("Recieved {MessageType} from node {Node}", arrivedMessage.Message.GetType().Name, node);
 
@@ -554,7 +642,7 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
 
     public Task OnMessageArrived(object message, IAddress address)
     {
-        if (message is RaftMessage raftMessage)
+        if (_bootstrapComplete && message is RaftMessage raftMessage)
         {
             _messages.Enqueue((raftMessage, address));
         }
@@ -568,6 +656,19 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
     public void OnStateRestore(IStateReader state)
     {
         _logger.LogInformation("Restoring state");
+
+        if (_bootstrapFromMembership)
+        {
+            var ids = state.Get<string[]>("bootstrapVoterIds");
+            if (ids != null && state.Get<string>("bootstrapClusterId") != _clusterMembership.ClusterId)
+            {
+                throw new InvalidOperationException("The persisted Raft voter list belongs to a different cluster ID.");
+            }
+            _voters = ids == null ? null : new RaftVoterConfiguration(ids, _expectedVoterCount, _clusterMembership.SelfMember.Node.Id);
+            _allVotersReady = _voters != null && state.Get<bool>("bootstrapComplete");
+            _bootstrapComplete = _allVotersReady;
+            _voterReadyReported = false;
+        }
 
         _votedFor = state.Get<string?>("votedFor");
         _currentTerm = state.Get<int>("currentTerm");
@@ -597,6 +698,12 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         state.Set("votedFor", _votedFor);
         state.Set("currentTerm", _currentTerm);
         state.Set("statusId", Status.Id);
+        if (_bootstrapFromMembership)
+        {
+            state.Set("bootstrapClusterId", _clusterMembership.ClusterId);
+            state.Set("bootstrapVoterIds", _voters?.GetIds());
+            state.Set("bootstrapComplete", _allVotersReady);
+        }
 
         if (_leaderState != null)
         {

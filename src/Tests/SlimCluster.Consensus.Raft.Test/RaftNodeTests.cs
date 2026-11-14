@@ -13,6 +13,7 @@ public class RaftNodeProxy : RaftNode
     }
 
     internal Task<bool> OnLoopRunProxy() => OnLoopRun(default);
+    internal Task OnStartingProxy() => OnStarting();
 }
 
 public class Node : AbstractNode

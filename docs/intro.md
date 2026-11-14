@@ -415,13 +415,32 @@ cfg.AddRaftConsensus(opts =>
 });
 ```
 
-- `VoterIds` is required. Use the same list of stable, unique node IDs on every Raft node and set each node's `ClusterConfiguration.NodeId` to its own ID from that list. Raft needs a majority of the configured voters even when SWIM loses contact with some of them.
-- `NodeCount` is optional. If set, it must equal the length of `VoterIds`.
+- `VoterIds` sets the initial voter list explicitly. Use the same stable IDs on every node, including each node's own `ClusterConfiguration.NodeId`. Leave the list empty to use one-time discovery bootstrap.
+- `NodeCount` is required for discovery bootstrap. With explicit `VoterIds`, omit it or set it to the length of the list.
 - `RequestTimeout` bounds how long a client waits for a command result. A `TimeoutException` means the outcome is unknown. The command may still commit later.
 - `LeaderTimeout` — time a follower waits without hearing from a leader before starting an election.
 - `LeaderPingInterval` — how often the leader sends heartbeats to followers.
 - `ElectionTimeoutMin` / `ElectionTimeoutMax` — randomised election timeout range (randomisation prevents split votes).
 - `LogSerializerType` — optionally override the serializer used for log entries (defaults to the configured `ISerializer`).
+
+#### Bootstrapping voters from SWIM
+
+For a new cluster whose initial voter IDs are unknown, configure SWIM and set the same `ClusterId` and `NodeCount` on every node. Register a shared bootstrap store and durable local persistence. For example, register the file-based store in dependency injection and add these options to your SlimCluster configuration.
+
+```cs
+builder.Services.AddSingleton<IRaftBootstrapStore>(
+    new SharedFileRaftBootstrapStore("/mnt/slimcluster-bootstrap"));
+
+// Inside AddSlimCluster, alongside SWIM and the transport
+cfg.AddPersistenceUsingLocalFile("/var/lib/slimcluster/raft-state.json");
+cfg.AddRaftConsensus(opts => opts.NodeCount = 3);
+```
+
+Create the shared directory before startup and mount the same storage on every voter. It must support atomic directory renames and exclusive file creation across hosts. An unavailable mount must fail I/O rather than exposing a writable local directory at the mount path. You can also implement `IRaftBootstrapStore` using a shared system that provides atomic conditional creation.
+
+Start only the intended initial voters under the cluster ID. When one node discovers exactly `NodeCount` distinct IDs including itself, it proposes that list. The shared store publishes one immutable roster. Each listed node saves that roster to its own durable state and acknowledges persistence. Raft waits for every listed voter to acknowledge before allowing the first election. After successful bootstrap, voters recover the list from local state, even when only part of the cluster is discoverable or the shared store is unavailable.
+
+Use a durable state directory unique to each voter. Keep node IDs stable across restarts and retain the shared record for the lifetime of the cluster. A new SWIM member stays outside Raft unless it appears in the published roster. Reusing a voter ID requires restoring that voter's persisted state, including its log. A running cluster needs a consensus-backed reconfiguration protocol to add or replace voters.
 
 #### Upgrading an existing Raft cluster
 

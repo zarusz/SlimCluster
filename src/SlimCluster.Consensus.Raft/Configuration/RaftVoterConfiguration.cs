@@ -5,24 +5,29 @@ internal sealed class RaftVoterConfiguration
     private readonly HashSet<string> _ids;
 
     public int Majority => _ids.Count / 2 + 1;
+    public string[] GetIds() => _ids.Order(StringComparer.Ordinal).ToArray();
 
     public RaftVoterConfiguration(RaftConsensusOptions options, string localId)
+        : this(options.VoterIds, options.NodeCount, localId)
     {
-        var ids = options.VoterIds;
+    }
+
+    public RaftVoterConfiguration(string[] ids, int expectedCount, string localId)
+    {
         if (ids == null || ids.Length == 0 || ids.Any(string.IsNullOrWhiteSpace))
         {
-            throw new ArgumentException("Raft requires a nonempty list of voter IDs.", nameof(options));
+            throw new ArgumentException("Raft requires a nonempty list of voter IDs.", nameof(ids));
         }
 
         _ids = new HashSet<string>(ids, StringComparer.Ordinal);
         if (_ids.Count != ids.Length || !_ids.Contains(localId))
         {
-            throw new ArgumentException("Raft voter IDs must be unique and include the local node ID.", nameof(options));
+            throw new ArgumentException("Raft voter IDs must be unique and include the local node ID.", nameof(ids));
         }
 
-        if (options.NodeCount != 0 && options.NodeCount != _ids.Count)
+        if (expectedCount != 0 && expectedCount != _ids.Count)
         {
-            throw new ArgumentException("Raft NodeCount must match the number of voter IDs when specified.", nameof(options));
+            throw new ArgumentException("Raft NodeCount must match the number of voter IDs when specified.", nameof(expectedCount));
         }
     }
 

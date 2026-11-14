@@ -4,11 +4,13 @@
 
 - [x] **Use a fixed Raft voter set.** Configure the same voter IDs on every node. Use those IDs for elections and commit acknowledgments, and use SWIM to discover peers and track reachability. Preserve each vote for its full term. Cover a five-node cluster split into groups of three and two, including recovery when connectivity returns. [Split-brain report #29](https://github.com/zarusz/SlimCluster/issues/29)
 - [x] **Bound follower commits by the verified log prefix.** Advance the commit index only through the last entry verified by the current `AppendEntries` request. Test heartbeats and partial appends against a divergent local suffix.
+- [x] **Bootstrap voters from SWIM.** Discover the initial voter IDs using the expected node count, publish the roster through an atomic shared store, and wait for each voter to persist it before elections.
 
 ## P1 · Sample and recovery
 
 - **Fix the counter sample across elections.** Handle the Raft no-op entries that advance the log index between application commands. Smoke-test the first HTTP increment after an election and another after failover.
 - **Make Raft storage durable and finish snapshot compaction.** Save the term, vote, and log across crashes. Capture snapshot bytes with their exact index and term. Size chunks for the serialized UDP payload. Test restart and lagging-follower recovery over real UDP. [Log compaction #14](https://github.com/zarusz/SlimCluster/issues/14)
+- **Support Raft voter reconfiguration.** Replicate configuration changes through Raft. Catch up new voters before promotion and require a majority of both the old and new configurations during the transition.
 
 ## P2 · Deployment and operations
 

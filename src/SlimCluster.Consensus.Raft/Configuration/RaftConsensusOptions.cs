@@ -25,12 +25,12 @@ public class RaftConsensusOptions
 
     /// <summary>
     /// The stable IDs of all Raft voters, including the local node.
-    /// Every voter must use the same list.
+    /// Every voter must use the same list. Leave empty to bootstrap from discovered members.
     /// </summary>
     public string[] VoterIds { get; set; } = Array.Empty<string>();
 
     /// <summary>
-    /// Optional expected voter count. When specified, it must match the number of voter IDs.
+    /// Expected voter count when bootstrapping from discovery. With explicit voter IDs, this can be unset.
     /// </summary>
     public int NodeCount { get; set; }
 

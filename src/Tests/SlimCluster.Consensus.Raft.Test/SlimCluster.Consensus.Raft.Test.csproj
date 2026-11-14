@@ -29,6 +29,7 @@
     <ProjectReference Include="..\..\SlimCluster.Transport.Ip\SlimCluster.Transport.Ip.csproj" />
     <ProjectReference Include="..\SlimCluster.Common.Test\SlimCluster.Common.Test.csproj" />
     <ProjectReference Include="..\..\SlimCluster.Consensus.Raft\SlimCluster.Consensus.Raft.csproj" />
+    <ProjectReference Include="..\..\SlimCluster.Persistence.LocalFile\SlimCluster.Persistence.LocalFile.csproj" />
   </ItemGroup>
 
   <ItemGroup>
