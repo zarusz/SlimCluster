@@ -109,6 +109,7 @@ public class RaftPartitionTests
             {
                 VoterIds = initial,
                 EnableVoterReconfiguration = true,
+                AutomaticVoterReplacementDelay = null,
                 LeaderPingInterval = TimeSpan.FromMilliseconds(100),
                 RequestTimeout = TimeSpan.FromSeconds(15)
             });

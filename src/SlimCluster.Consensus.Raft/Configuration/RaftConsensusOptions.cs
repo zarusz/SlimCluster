@@ -43,9 +43,10 @@ public class RaftConsensusOptions
 
     /// <summary>
     /// How long a leader must observe a voter absent and a standby learner present before
-    /// proposing automatic replacement. Null disables automatic replacement.
+    /// proposing automatic replacement. Defaults to two minutes when voter reconfiguration
+    /// is enabled. Set to null for manual reconfiguration only.
     /// </summary>
-    public TimeSpan? AutomaticVoterReplacementDelay { get; set; }
+    public TimeSpan? AutomaticVoterReplacementDelay { get; set; } = TimeSpan.FromMinutes(2);
 
     /// <summary>Optional additional admission filter for automatically promoted learners.</summary>
     public Func<IMember, bool>? AutomaticVoterReplacementCandidate { get; set; }

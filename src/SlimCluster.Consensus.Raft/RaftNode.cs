@@ -109,10 +109,11 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
         {
             throw new ArgumentException("Joining as a learner requires voter reconfiguration.", nameof(options));
         }
-        if (_options.AutomaticVoterReplacementDelay is { } replacementDelay
-            && (!_options.EnableVoterReconfiguration || replacementDelay <= TimeSpan.Zero))
+        if (_options.EnableVoterReconfiguration
+            && _options.AutomaticVoterReplacementDelay is { } replacementDelay
+            && replacementDelay <= TimeSpan.Zero)
         {
-            throw new ArgumentException("Automatic voter replacement requires reconfiguration and a positive delay.", nameof(options));
+            throw new ArgumentException("The automatic voter replacement delay must be positive or null.", nameof(options));
         }
         _bootstrapFromMembership = _options.VoterIds is { Length: 0 } && _expectedVoterCount > 0;
         if (!_bootstrapFromMembership)
