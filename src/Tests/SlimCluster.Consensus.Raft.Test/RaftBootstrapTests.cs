@@ -22,7 +22,7 @@ public class RaftBootstrapTests
             var ids = new[] { "node-1", "node-2", "node-3" };
             var members = ids.Select((id, i) => (IMember)new Member(new Node(id, $"192.168.1.{i + 1}", 6200), DateTimeOffset.UnixEpoch)).ToArray();
             var store = new SharedFileRaftBootstrapStore(directory.FullName);
-            var peers = members.Select(member => new Peer(directory.FullName, member, store)).ToArray();
+            var peers = members.Select(member => new Peer(directory.FullName, member, bootstrapDirectory: directory.FullName)).ToArray();
             foreach (var peer in peers)
             {
                 await peer.Raft.OnStartingProxy();
@@ -55,9 +55,8 @@ public class RaftBootstrapTests
                 state["bootstrapComplete"]!.GetValue<bool>().Should().BeTrue();
             }
 
-            // Restart with a subset of peers discovered and an unavailable bootstrap store.
-            var unavailable = new Mock<IRaftBootstrapStore>(MockBehavior.Strict);
-            var restarted = new Peer(directory.FullName, members[0], unavailable.Object);
+            // Restart from completed bootstrap without configuring a store again.
+            var restarted = new Peer(directory.FullName, members[0]);
             await restarted.Raft.OnStartingProxy();
             restarted.Discovered = new[] { members[1] };
             await restarted.Raft.OnLoopRunProxy();
@@ -65,10 +64,10 @@ public class RaftBootstrapTests
             await restarted.Raft.OnLoopRunProxy();
             restarted.Raft.Status.Should().Be(RaftNodeStatus.Candidate);
             restarted.Sender.Verify(x => x.SendMessage(It.IsAny<RequestVoteRequest>(), members[1].Node.Address), Times.Once);
-            unavailable.VerifyNoOtherCalls();
 
             var outsider = new Member(new Node("outsider", "192.168.1.4", 6200), DateTimeOffset.UnixEpoch);
-            var newcomer = new Peer(directory.FullName, outsider, store) { Discovered = members[1..] };
+            var newcomer = new Peer(directory.FullName, outsider, store, Path.Combine(directory.FullName, "unused"))
+                { Discovered = members[1..] };
             await newcomer.Raft.OnStartingProxy();
             await newcomer.Raft.OnLoopRunProxy();
             newcomer.Raft.Status.Should().Be(RaftNodeStatus.Unknown);
@@ -83,6 +82,24 @@ public class RaftBootstrapTests
         finally
         {
             directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Given_NewCluster_When_NoSharedBootstrapStorageIsConfigured_Then_ReportsHowToConfigureIt()
+    {
+        var directory = Directory.CreateTempSubdirectory();
+        try
+        {
+            var node = new Member(new Node("node-1", "192.168.1.1", 6200), DateTimeOffset.UnixEpoch);
+            var peer = new Peer(directory.FullName, node);
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => peer.Raft.OnStartingProxy());
+            error.Message.Should().Contain("BootstrapDirectory").And.Contain("IRaftBootstrapStore");
+        }
+        finally
+        {
+            directory.Delete();
         }
     }
 
@@ -120,7 +137,7 @@ public class RaftBootstrapTests
         public RaftNodeProxy Raft { get; }
         public string StatePath { get; }
 
-        public Peer(string directory, IMember member, IRaftBootstrapStore store)
+        public Peer(string directory, IMember member, IRaftBootstrapStore? store = null, string? bootstrapDirectory = null)
         {
             StatePath = Path.Combine(directory, $"{member.Node.Id}.json");
             var membership = new Mock<IClusterMembership>();
@@ -133,7 +150,11 @@ public class RaftBootstrapTests
             services.Setup(x => x.GetService(typeof(ISerializer))).Returns(Mock.Of<ISerializer>());
             services.Setup(x => x.GetService(typeof(IRaftBootstrapStore))).Returns(store);
             Raft = new RaftNodeProxy(NullLoggerFactory.Instance, services.Object, membership.Object, clock.Object,
-                new InMemoryLogRepository(), Sender.Object, Mock.Of<IStateMachine>(), Options.Create(new RaftConsensusOptions { NodeCount = 3 }));
+                new InMemoryLogRepository(), Sender.Object, Mock.Of<IStateMachine>(), Options.Create(new RaftConsensusOptions
+                {
+                    NodeCount = 3,
+                    BootstrapDirectory = bootstrapDirectory
+                }));
             services.Setup(x => x.GetService(typeof(IClusterPersistenceService)))
                 .Returns(new LocalJsonFileClusterPersistenceService(new[] { Raft }, StatePath, Formatting.None));
         }

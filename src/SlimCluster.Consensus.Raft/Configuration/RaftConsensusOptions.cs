@@ -35,6 +35,12 @@ public class RaftConsensusOptions
     /// </summary>
     public int NodeCount { get; set; }
 
+    /// <summary>
+    /// Existing directory on shared storage for the built-in SWIM bootstrap store.
+    /// An explicitly registered <see cref="IRaftBootstrapStore"/> takes precedence.
+    /// </summary>
+    public string? BootstrapDirectory { get; set; }
+
     /// <summary>Enables changing the voter set through the replicated log.</summary>
     public bool EnableVoterReconfiguration { get; set; }
 

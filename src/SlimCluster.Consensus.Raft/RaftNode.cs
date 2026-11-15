@@ -144,14 +144,9 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             throw new InvalidOperationException("Raft voter reconfiguration requires a durable log repository.");
         }
 
-        if (_bootstrapFromMembership)
+        if (_bootstrapFromMembership && string.IsNullOrWhiteSpace(_clusterMembership.ClusterId))
         {
-            if (string.IsNullOrWhiteSpace(_clusterMembership.ClusterId))
-            {
-                throw new InvalidOperationException("Raft bootstrap requires a cluster ID.");
-            }
-
-            _bootstrapStore = _serviceProvider.GetRequiredService<IRaftBootstrapStore>();
+            throw new InvalidOperationException("Raft bootstrap requires a cluster ID.");
         }
 
         if (_bootstrapFromMembership || _options.EnableVoterReconfiguration)
@@ -161,6 +156,12 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             {
                 throw new InvalidOperationException("Use explicit voter IDs when upgrading an existing Raft cluster.");
             }
+        }
+
+        if (_bootstrapFromMembership && !_bootstrapComplete)
+        {
+            _bootstrapStore = _serviceProvider.GetService<IRaftBootstrapStore>()
+                ?? CreateSharedFileBootstrapStore();
         }
 
         if (_options.EnableVoterReconfiguration)
@@ -177,6 +178,16 @@ public class RaftNode : TaskLoop, IMessageArrivedHandler, IAsyncDisposable, IDur
             await RestoreCommittedCommands();
             await InitializeVoterState();
         }
+    }
+
+    private SharedFileRaftBootstrapStore CreateSharedFileBootstrapStore()
+    {
+        if (string.IsNullOrWhiteSpace(_options.BootstrapDirectory))
+        {
+            throw new InvalidOperationException("Set Raft BootstrapDirectory to an existing shared directory or register an IRaftBootstrapStore.");
+        }
+
+        return new SharedFileRaftBootstrapStore(_options.BootstrapDirectory);
     }
 
     private async Task RestoreCommittedCommands()

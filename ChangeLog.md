@@ -7,7 +7,7 @@ Unreleased changes appear first, followed by releases in reverse chronological o
 ### Raft safety
 
 - Elections and write commits require a majority of the configured voters, even when SWIM loses contact with peers. Nodes retain their vote for the full term.
-- New clusters can discover their initial voters through SWIM by configuring `NodeCount` with a shared bootstrap store and durable per-node state. Elections wait until all initial voters persist the published roster.
+- New clusters can discover their initial voters through SWIM by configuring `NodeCount` and a shared `BootstrapDirectory`, with durable per-node state. SlimCluster supplies a built-in file store. A registered `IRaftBootstrapStore` takes precedence. Elections wait until all initial voters persist the published roster.
 - Clusters with reconfiguration enabled can add, remove, or replace voters through the leader. New nodes start as learners, and Raft requires both voter majorities during the transition. See the [configuration and storage requirements](docs/intro.md#changing-raft-voters).
 - Pre-voting protects leadership when a removed voter returns with a stale configuration. Readmitting a retired node requires a fresh learner ID and local Raft storage.
 - When voter reconfiguration is enabled, the [automatic replacement policy](docs/intro.md#automatically-replacing-absent-voters) replaces persistently absent voters with standby learners after two minutes by default. Set `AutomaticVoterReplacementDelay` to `null` for manual changes only. A returning voter cancels the attempt before the joint configuration is logged.
