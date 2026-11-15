@@ -284,7 +284,7 @@ To add the Raft plugin register it:
 // Setup Raft Cluster Consensus
 cfg.AddRaftConsensus(opts =>
 {
-    opts.NodeCount = 3;
+    opts.VoterIds = new[] { "node-1", "node-2", "node-3" };
 
     // Use custom values or remove and use defaults
     opts.LeaderTimeout = TimeSpan.FromSeconds(5);
@@ -405,7 +405,7 @@ Raft configuration parameters refer to the properties inside the `opts` object (
 // Setup Raft Cluster Consensus
 cfg.AddRaftConsensus(opts =>
 {
-    opts.NodeCount = 3;
+    opts.VoterIds = new[] { "node-1", "node-2", "node-3" };
 
     // Use custom values or remove and use defaults
     opts.LeaderTimeout = TimeSpan.FromSeconds(5);
@@ -415,11 +415,95 @@ cfg.AddRaftConsensus(opts =>
 });
 ```
 
-- `NodeCount` sets the expected node count of the cluster. This is needed to be able to calculate the majority of nodes.
+- `VoterIds` sets the initial voter list explicitly. Use the same stable IDs on every node. Each initial voter's `ClusterConfiguration.NodeId` must appear in the list. Leave the list empty to use one-time discovery bootstrap.
+- `NodeCount` is required for discovery bootstrap. With explicit `VoterIds`, omit it or set it to the length of the list.
+- `BootstrapDirectory` configures the built-in shared-file store for discovery bootstrap. A registered `IRaftBootstrapStore` takes precedence.
+- `EnableVoterReconfiguration` enables log-backed changes to the voter set. Set `JoinAsLearner` on a new node outside the initial voter set.
+- `AutomaticVoterReplacementDelay` defaults to two minutes when voter reconfiguration is enabled. Set it to `null` to keep voter changes manual.
+- `RequestTimeout` bounds how long a client waits for a command result. A `TimeoutException` means the outcome is unknown. The command may still commit later.
 - `LeaderTimeout` — time a follower waits without hearing from a leader before starting an election.
 - `LeaderPingInterval` — how often the leader sends heartbeats to followers.
 - `ElectionTimeoutMin` / `ElectionTimeoutMax` — randomised election timeout range (randomisation prevents split votes).
 - `LogSerializerType` — optionally override the serializer used for log entries (defaults to the configured `ISerializer`).
+
+#### Bootstrapping voters from SWIM
+
+For a new cluster whose initial voter IDs are unknown, configure SWIM and set the same `ClusterId` and `NodeCount` on every node. Point `BootstrapDirectory` at the shared storage and configure durable local persistence for each voter. SlimCluster uses its built-in file store for that directory.
+
+```cs
+// Inside AddSlimCluster, alongside SWIM and the transport
+cfg.AddPersistenceUsingLocalFile("/var/lib/slimcluster/raft-state.json");
+cfg.AddRaftConsensus(opts =>
+{
+    opts.NodeCount = 3;
+    opts.BootstrapDirectory = "/mnt/slimcluster-bootstrap";
+});
+```
+
+Create the shared directory before startup. Processes running on one host can use the same existing local directory. For a multi-host cluster, mount the same storage on every voter. It must support atomic directory renames and exclusive file creation across hosts. An unavailable mount must fail I/O rather than exposing a writable local directory at the mount path. To use a different shared system with atomic conditional creation, register your own `IRaftBootstrapStore`.
+
+Start only the intended initial voters under the cluster ID. When one node discovers exactly `NodeCount` distinct IDs including itself, it proposes that list. The shared store publishes one immutable roster. Each listed node saves that roster to its own durable state and acknowledges persistence. Raft waits for every listed voter to acknowledge before allowing the first election. After successful bootstrap, voters recover the list from local state, even when only part of the cluster is discoverable or the shared store is unavailable.
+
+Use a durable state directory unique to each voter. Keep node IDs stable across restarts and retain the shared record for the lifetime of the cluster. A new SWIM member starts outside the voter set. Use [Raft voter reconfiguration](#changing-raft-voters) to promote it. Reusing a voter ID requires restoring that voter's persisted term, vote, and log.
+
+#### Changing Raft voters
+
+Enable reconfiguration on every node before changing the voter set. Keep each node's term and vote in durable local storage and register an `IDurableRaftLogRepository`. The included `FileRaftLogRepository` atomically replaces its local file on updates and is intended for small clusters. Keep the full log when using reconfiguration. Snapshot installation and log compaction are currently unavailable in this mode.
+
+```cs
+builder.Services.AddSingleton<ILogRepository>(
+    new FileRaftLogRepository("/var/lib/slimcluster/raft-log.json"));
+
+// Inside AddSlimCluster, alongside SWIM and the transport
+cfg.AddPersistenceUsingLocalFile("/var/lib/slimcluster/raft-state.json");
+cfg.AddRaftConsensus(opts =>
+{
+    opts.VoterIds = new[] { "node-1", "node-2", "node-3" };
+    opts.EnableVoterReconfiguration = true;
+    opts.JoinAsLearner = cfg.NodeId == "node-4";
+});
+```
+
+For a cluster bootstrapped through SWIM, keep its initial `NodeCount` and bootstrap store configuration in place of `VoterIds`. Start learners after the initial bootstrap. In either mode, keep the initial voter configuration unchanged on disk and in app settings. Raft recovers subsequent configurations from the durable log. The state machine must tolerate gaps in command indexes and support restoring and replaying commands by log index.
+
+Once SWIM discovers the learner, resolve `IRaftVoterReconfiguration` on the current leader and pass the desired voter set. For example, this replaces `node-1` with `node-4`.
+
+```cs
+await voterReconfiguration.ChangeVoters(new[] { "node-2", "node-3", "node-4" }, cancellationToken);
+```
+
+Raft catches up new voters before writing a joint configuration entry. During the joint phase, elections and commits require a majority of each voter set. The final entry establishes the new voter set. If leadership changes after the joint entry commits, the next leader can finish the transition. A timeout or cancellation after logging starts leaves the outcome unknown.
+
+SWIM discovers peers and tracks reachability. Raft changes the voter set through its log. Issue one change at a time and keep enough voters available in both sets during the transition. If the cluster has lost its existing quorum, adding more SWIM members cannot restore it.
+
+When reconfiguration is enabled, candidates first run a pre-vote without changing the term. This prevents a former voter that missed its removal from starting an election with a stale log or configuration. If you want to bring a retired node back into Raft, give it a fresh node ID and fresh local Raft storage, then start it as a learner. Manual and automatic replacement both require a fresh ID for readmission.
+
+#### Automatically replacing absent voters
+
+Enabling voter reconfiguration also enables automatic replacement with a two-minute observation period. To customize the delay or keep replacements manual, configure `AutomaticVoterReplacementDelay` on each node that may become leader.
+
+```cs
+opts.EnableVoterReconfiguration = true;
+opts.AutomaticVoterReplacementDelay = TimeSpan.FromMinutes(3); // Use null for manual changes only.
+// Optional admission filter for environments with a dedicated pool of standby learners.
+opts.AutomaticVoterReplacementCandidate = member => member.Node.Id.StartsWith("standby-", StringComparison.Ordinal);
+```
+
+Start replacement nodes with unique IDs and `JoinAsLearner = true`. The leader waits until SWIM has continuously shown one voter absent and a standby learner present for the configured period. SWIM suspicion alone leaves the voter present. A new leader starts its own observation period.
+
+The leader verifies the candidate is running as a standby learner and has recent Raft acknowledgments from a majority of the current voters before attempting a replacement. It catches up the learner, then checks the continued absence, learner reachability, and current quorum before appending the joint entry. A voter that returns before that point cancels the automatic attempt. Once the joint entry is appended, Raft continues the normal transition with both quorum checks.
+
+Automatic replacement preserves the voter count and replaces one voter at a time. A previously admitted voter cannot serve as an automatic standby. Choose a delay longer than the interruptions you expect SWIM to recover from. Configure the optional admission filter when only some standbys should qualify.
+
+Raft's joint-consensus protocol governs how a voter change is committed. The SWIM observation period, standby selection, and decision to propose a change are SlimCluster policy. [Raft paper, section 6](https://raft.github.io/raft.pdf#page=10)
+
+#### Upgrading an existing Raft cluster
+
+1. Record the stable node IDs of the existing voters. Configure that same list as `VoterIds` on every node, including its own ID. Keep each node's existing `ClusterConfiguration.NodeId` and persisted state. You can remove `NodeCount` once the list is configured.
+2. Schedule a coordinated restart. Stop all old-version voters before starting the new version because older versions calculate quorum from their current SWIM view.
+3. Bring up a majority of the configured voters so the cluster can elect a leader and commit writes again.
+
+Keep the same voter list throughout the upgrade. To enable later voter changes, configure durable term, vote, and log storage on every node and preserve the existing log and applied state when switching repositories.
 
 ## Leader Request Delegation ASP.NET Core Middleware
 

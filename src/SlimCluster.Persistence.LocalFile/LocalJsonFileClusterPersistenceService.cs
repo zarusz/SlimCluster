@@ -39,7 +39,24 @@ public class LocalJsonFileClusterPersistenceService : IClusterPersistenceService
             }
 
             var json = JsonConvert.SerializeObject(state, _jsonSettings);
-            await File.WriteAllTextAsync(_filePath, json, _encoding, cancellationToken);
+            var temporaryPath = $"{_filePath}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                await using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+                await using (var writer = new StreamWriter(stream, _encoding, leaveOpen: true))
+                {
+                    await writer.WriteAsync(json.AsMemory(), cancellationToken);
+                    await writer.FlushAsync(cancellationToken);
+                    stream.Flush(flushToDisk: true);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                File.Move(temporaryPath, _filePath, overwrite: true);
+            }
+            finally
+            {
+                File.Delete(temporaryPath);
+            }
         }
         catch (Exception ex)
         {
@@ -51,7 +68,15 @@ public class LocalJsonFileClusterPersistenceService : IClusterPersistenceService
     {
         try
         {
-            var json = await File.ReadAllTextAsync(_filePath, _encoding, cancellationToken);
+            string json;
+            try
+            {
+                json = await File.ReadAllTextAsync(_filePath, _encoding, cancellationToken);
+            }
+            catch (FileNotFoundException)
+            {
+                return;
+            }
 
             var state = JsonConvert.DeserializeObject<JObject>(json, _jsonSettings)!;
             foreach (var component in _components)

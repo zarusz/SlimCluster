@@ -1,11 +1,12 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: sc-service
   labels:
     app: sc-service
     run: sc-service
 spec:
+  serviceName: sc-service-peers
   replicas: 3
   selector:
     matchLabels:
@@ -25,3 +26,9 @@ spec:
         env:
         - name: ASPNETCORE_URLS
           value: "http://+:8080"
+        - name: RaftVoterIds__0
+          value: sc-service-0
+        - name: RaftVoterIds__1
+          value: sc-service-1
+        - name: RaftVoterIds__2
+          value: sc-service-2

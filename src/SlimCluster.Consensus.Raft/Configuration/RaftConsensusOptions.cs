@@ -1,5 +1,6 @@
 ﻿namespace SlimCluster.Consensus.Raft;
 
+using SlimCluster.Membership;
 using SlimCluster.Serialization;
 
 public class RaftConsensusOptions
@@ -24,9 +25,37 @@ public class RaftConsensusOptions
     public TimeSpan LeaderPingInterval { get; set; } = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
-    /// Defines the target cluster size. It is used to calculate majority of nodes.
+    /// The stable IDs of all Raft voters, including the local node.
+    /// Every voter must use the same list. Leave empty to bootstrap from discovered members.
+    /// </summary>
+    public string[] VoterIds { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Expected voter count when bootstrapping from discovery. With explicit voter IDs, this can be unset.
     /// </summary>
     public int NodeCount { get; set; }
+
+    /// <summary>
+    /// Existing directory on shared storage for the built-in SWIM bootstrap store.
+    /// An explicitly registered <see cref="IRaftBootstrapStore"/> takes precedence.
+    /// </summary>
+    public string? BootstrapDirectory { get; set; }
+
+    /// <summary>Enables changing the voter set through the replicated log.</summary>
+    public bool EnableVoterReconfiguration { get; set; }
+
+    /// <summary>Starts a node outside the initial voter set so a leader can catch it up before promotion.</summary>
+    public bool JoinAsLearner { get; set; }
+
+    /// <summary>
+    /// How long a leader must observe a voter absent and a standby learner present before
+    /// proposing automatic replacement. Defaults to two minutes when voter reconfiguration
+    /// is enabled. Set to null for manual reconfiguration only.
+    /// </summary>
+    public TimeSpan? AutomaticVoterReplacementDelay { get; set; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>Optional additional admission filter for automatically promoted learners.</summary>
+    public Func<IMember, bool>? AutomaticVoterReplacementCandidate { get; set; }
 
     /// <summary>
     /// The service type that should be resolved from MSDI for Log Entry serialization.

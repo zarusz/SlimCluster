@@ -18,14 +18,15 @@ public class IPMessageEndpointTests
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task When_SendRequest_And_ResponseArrives_Then_ResponseIsReturned(bool responseWithMatchingRequestIdArrived)
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task When_SendRequest_And_ResponseArrives_Then_MatchesRequestAndAddress(bool matchingRequestId, bool matchingAddress)
     {
         var request = new SomeRequest();
         var response = new SomeResponse
         {
-            RequestId = responseWithMatchingRequestIdArrived
+            RequestId = matchingRequestId
                 ? request.RequestId
                 : Guid.NewGuid()
         };
@@ -60,7 +61,8 @@ public class IPMessageEndpointTests
             // Send response for request            
             if (IPEndPointAddress.From(endPoint).Equals(remoteAddress) && payload == requestPayload)
             {
-                await _socketClient.OnMessageArrived(endPoint, responsePayload);
+                var sender = matchingAddress ? endPoint : selfEndPoint.ToIPEndPoint();
+                await _socketClient.OnMessageArrived(sender, responsePayload);
             }
         });
 
@@ -73,13 +75,13 @@ public class IPMessageEndpointTests
         var finishedTask = await Task.WhenAny(Task.Delay(timeout.Multiply(2)), responseTask);
         finishedTask.Should().Be(responseTask);
 
-        if (responseWithMatchingRequestIdArrived)
+        if (matchingRequestId && matchingAddress)
         {
             // completed
             responseTask.IsCompleted.Should().BeTrue();
             responseTask.IsCanceled.Should().BeFalse();
             responseTask.IsFaulted.Should().BeFalse();
-            responseTask.Result.Should().Be(response);
+            (await responseTask).Should().Be(response);
         }
         else
         {

@@ -25,7 +25,7 @@ public class RaftLeaderStateTests : AbstractRaftIntegrationTest, IAsyncLifetime
             _logRepositoryMock.Object,
             _stateMachineMock.Object,
             _logSerializerMock.Object,
-            new Time(),
+            _timeMock.Object,
             _onNewerTermDiscovered.Object);
 
         _options.LeaderPingInterval = TimeSpan.FromSeconds(0.5);
@@ -50,6 +50,9 @@ public class RaftLeaderStateTests : AbstractRaftIntegrationTest, IAsyncLifetime
             .ReturnsAsync(commandResult);
 
         var otherNodeReplicatedIndex = _otherMembers.ToDictionary(x => x.Node.Address, x => 0);
+        var followersWithCommit = new HashSet<IAddress>();
+        var noOpReplicated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var commitAdvertised = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         _messageSenderMock
             .Setup(x => x.SendRequest(It.IsAny<AppendEntriesRequest>(), It.IsAny<IAddress>(), It.IsAny<TimeSpan?>()))
@@ -62,6 +65,18 @@ public class RaftLeaderStateTests : AbstractRaftIntegrationTest, IAsyncLifetime
                 {
                     currentIndex = Math.Max(currentIndex, req.PrevLogIndex + (req.Entries?.Count ?? 0));
                     otherNodeReplicatedIndex[a] = currentIndex;
+                    if (otherNodeReplicatedIndex.Values.All(index => index >= 1))
+                    {
+                        noOpReplicated.TrySetResult();
+                    }
+                    if (req.LeaderCommitIndex == commandIndex && req.PrevLogIndex == commandIndex && req.Entries == null)
+                    {
+                        followersWithCommit.Add(a);
+                        if (followersWithCommit.Count == _otherMembers.Count)
+                        {
+                            commitAdvertised.TrySetResult();
+                        }
+                    }
                 }
 
                 return new AppendEntriesResponse((RaftMessage)r) { Success = success, Term = _term };
@@ -69,17 +84,17 @@ public class RaftLeaderStateTests : AbstractRaftIntegrationTest, IAsyncLifetime
 
         await _subject.Start();
 
-        // wait until leader loop started
-        await Task.Delay(TimeSpan.FromSeconds(2));
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await noOpReplicated.Task.WaitAsync(cts.Token);
 
         // act
         var result = await _subject.OnClientRequest(command, cts.Token);
 
-        // assert        
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        _now += _options.LeaderPingInterval;
+        await commitAdvertised.Task.WaitAsync(cts.Token);
+        await _subject.Stop();
 
+        // assert
         _logRepositoryMock
             .Verify(x => x.Append(_term, Array.Empty<byte>()), Times.Once);
 

@@ -23,7 +23,6 @@ public class RaftLeaderMajorityTests : AbstractRaftIntegrationTest, IAsyncLifeti
         _logSerializerMock = new SerializerMock();
         _onNewerTermDiscovered = new Mock<OnNewerTermDiscovered>();
 
-        _options.NodeCount = 3;
         _options.LeaderPingInterval = TimeSpan.FromMilliseconds(200);
 
         _subject = new RaftLeaderState(
@@ -41,6 +40,34 @@ public class RaftLeaderMajorityTests : AbstractRaftIntegrationTest, IAsyncLifeti
 
     public Task InitializeAsync() => Task.CompletedTask;
     public Task DisposeAsync() => _subject.Stop();
+
+    [Fact]
+    public async Task Given_PartitionedLeader_When_OnlyOneVoterAndAnOutsiderAcknowledge_Then_WriteTimesOut()
+    {
+        _options.VoterIds = new[] { "Node-01", "Node-02", "Node-03", "Node-04", "Node-05" };
+        _options.RequestTimeout = TimeSpan.FromMilliseconds(250);
+        var reachableVoter = _otherMembers[0];
+        var outsider = new Member(new Node("outsider", "192.168.1.6", 6200), _now);
+        _otherMembers = new List<IMember> { reachableVoter, outsider };
+        var subject = CreateLeaderStateProxy(_term);
+        var command = new object();
+        _logSerializerMock.SetupSerDes(command);
+
+        // Even if replication state contains an outsider, its index cannot help form a quorum.
+        subject.ReplicationStateByNode[outsider.Node.Id] = new FollowerReplicatonState { MatchIndex = 1, NextIndex = 2 };
+        subject.ReplicationStateByNode[reachableVoter.Node.Id] = new FollowerReplicatonState
+        {
+            MatchIndex = 1,
+            NextIndex = 2,
+            LastAppendRequest = DateTimeOffset.UtcNow.AddDays(1)
+        };
+        var pending = subject.OnClientRequest(command, default);
+        await subject.OnLoopRunProxy();
+
+        await Assert.ThrowsAsync<TimeoutException>(() => pending);
+        _logRepositoryMock.Object.CommitedIndex.Should().Be(0);
+        _messageSenderMock.VerifyNoOtherCalls();
+    }
 
     private sealed class RaftLeaderStateProxy : RaftLeaderState
     {
